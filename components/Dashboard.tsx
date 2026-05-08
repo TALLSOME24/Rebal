@@ -7,11 +7,13 @@ import {
   useWriteContract,
   useWaitForTransactionReceipt,
   usePublicClient,
+  useWalletClient,
 } from "wagmi";
-import { formatEther, parseEther, type Address, type Hex, hexToString } from "viem";
+import { formatEther, parseEther, parseUnits, type Address, type Hex, hexToString } from "viem";
 import { portfolioAgentAbi } from "@/lib/abi/portfolioAgent";
+import { mockErc20Abi } from "@/lib/abi/mockERC20";
 import { schedulerAbi } from "@/lib/abi/scheduler";
-import { portfolioAgentAddress, SCHEDULER } from "@/lib/constants";
+import { MOCK_TOKENS, portfolioAgentAddress, SCHEDULER } from "@/lib/constants";
 import { fetchHttpExecutor } from "@/lib/tee";
 import { ChainGuard } from "./ChainGuard";
 
@@ -38,6 +40,7 @@ type AllocationBarProps = {
   value: number;
   bps: number;
   tone: "purple" | "green";
+  address?: Address;
 };
 
 function shortHex(value?: string, head = 6, tail = 4) {
@@ -57,13 +60,16 @@ function StatCard({ label, value, tone }: { label: string; value: string; tone?:
   );
 }
 
-function AllocationBar({ label, value, bps, tone }: AllocationBarProps) {
+function AllocationBar({ label, value, bps, tone, address }: AllocationBarProps) {
   const barColor = tone === "green" ? "bg-rebal-success" : "bg-rebal-primary";
 
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between gap-3">
-        <span className="text-sm text-neutral-300">{label}</span>
+        <span className="text-sm text-neutral-300">
+          {label}
+          {address && <span className="ml-2 font-mono text-[10px] text-neutral-500">{shortHex(address, 8, 4)}</span>}
+        </span>
         <span className="font-mono text-xs text-neutral-400">
           {value}% / {bps} bps
         </span>
@@ -86,13 +92,15 @@ export function Dashboard() {
   const agent = portfolioAgentAddress();
   const { address, isConnected } = useAccount();
   const publicClient = usePublicClient();
+  const { data: walletClient } = useWalletClient();
 
   const [executor, setExecutor] = useState<Address | undefined>();
   const [executorLoadError, setExecutorLoadError] = useState<string | null>(null);
 
-  const [ethPct, setEthPct] = useState(40);
+  const [wethPct, setWethPct] = useState(40);
   const [wbtcPct, setWbtcPct] = useState(30);
-  const usdcPct = Math.max(0, 100 - ethPct - wbtcPct);
+  const [usdcPct, setUsdcPct] = useState(20);
+  const usdtPct = Math.max(0, 100 - wethPct - wbtcPct - usdcPct);
   const [riskMode, setRiskMode] = useState<0 | 1 | 2>(1);
 
   const [freq, setFreq] = useState(80);
@@ -104,6 +112,7 @@ export function Dashboard() {
 
   const [decisions, setDecisions] = useState<DecisionRow[]>([]);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
+  const [isClaiming, setIsClaiming] = useState(false);
 
   const { data: portfolio } = useReadContract({
     address: agent,
@@ -163,12 +172,29 @@ export function Dashboard() {
   };
 
   const bpsTriplet = useMemo(() => {
-    const wbtcClamped = Math.min(wbtcPct, 100 - ethPct);
-    const ethBps = Math.round(ethPct * 100);
+    const wbtcClamped = Math.min(wbtcPct, 100 - wethPct);
+    const ethBps = Math.round(wethPct * 100);
     const wbtcBps = Math.round(wbtcClamped * 100);
     const usdcBps = 10000 - ethBps - wbtcBps;
     return { ethBps, wbtcBps, usdcBps } as const;
-  }, [ethPct, wbtcPct]);
+  }, [wethPct, wbtcPct]);
+
+  const mockTokenBps = useMemo(() => {
+    const wethBps = Math.round(wethPct * 100);
+    const wbtcBps = Math.round(wbtcPct * 100);
+    const usdcBps = Math.round(usdcPct * 100);
+    const usdtBps = 10000 - wethBps - wbtcBps - usdcBps;
+    return { wethBps, wbtcBps, usdcBps, usdtBps };
+  }, [usdcPct, wethPct, wbtcPct]);
+
+  const setAllocation = (nextWeth: number, nextWbtc: number, nextUsdc: number) => {
+    const weth = Math.max(0, Math.min(100, nextWeth));
+    const wbtc = Math.max(0, Math.min(100 - weth, nextWbtc));
+    const usdc = Math.max(0, Math.min(100 - weth - wbtc, nextUsdc));
+    setWethPct(weth);
+    setWbtcPct(wbtc);
+    setUsdcPct(usdc);
+  };
 
   const register = () => {
     if (!agent || !executor) return;
@@ -224,6 +250,37 @@ export function Dashboard() {
       abi: portfolioAgentAbi,
       functionName: "cancelAutomation",
     });
+  };
+
+  const claimTestTokens = async () => {
+    if (!walletClient || !publicClient || !address) return;
+    setIsClaiming(true);
+    setStatusMsg("Claiming mock tokens...");
+    try {
+      const claims = [
+        { symbol: "WETH", token: MOCK_TOKENS.WETH, amount: parseUnits("100", 18) },
+        { symbol: "WBTC", token: MOCK_TOKENS.WBTC, amount: parseUnits("0.01", 8) },
+        { symbol: "USDC", token: MOCK_TOKENS.USDC, amount: parseUnits("1000", 6) },
+        { symbol: "USDT", token: MOCK_TOKENS.USDT, amount: parseUnits("1000", 6) },
+      ];
+
+      for (const claim of claims) {
+        setStatusMsg(`Claiming ${claim.symbol}...`);
+        const tx = await walletClient.writeContract({
+          address: claim.token,
+          abi: mockErc20Abi,
+          functionName: "mint",
+          args: [claim.amount],
+        });
+        await publicClient.waitForTransactionReceipt({ hash: tx });
+      }
+
+      setStatusMsg("Claimed 100 WETH, 0.01 WBTC, 1000 USDC, and 1000 USDT.");
+    } catch (e) {
+      setStatusMsg(e instanceof Error ? e.message : "Token claim failed.");
+    } finally {
+      setIsClaiming(false);
+    }
   };
 
   const fetchRecentDecisions = useCallback(async () => {
@@ -334,45 +391,56 @@ export function Dashboard() {
                 <div className="mb-5 flex items-center justify-between gap-3">
                   <div>
                     <h2 className="text-lg font-semibold text-neutral-100">Allocation Targets</h2>
-                    <p className="text-xs text-neutral-500">ETH / WBTC / USDC basis points stored on-chain.</p>
+                    <p className="text-xs text-neutral-500">WETH / WBTC / USDC / USDT mock token targets.</p>
                   </div>
                   <span className="font-mono text-xs text-rebal-success">
-                    {bpsTriplet.ethBps + bpsTriplet.wbtcBps + bpsTriplet.usdcBps === 10000 ? "valid" : "check total"}
+                    {mockTokenBps.wethBps + mockTokenBps.wbtcBps + mockTokenBps.usdcBps + mockTokenBps.usdtBps === 10000
+                      ? "valid"
+                      : "check total"}
                   </span>
                 </div>
 
                 <div className="space-y-5">
-                  <AllocationBar label="ETH" value={ethPct} bps={bpsTriplet.ethBps} tone="purple" />
+                  <AllocationBar label="WETH" value={wethPct} bps={mockTokenBps.wethBps} tone="purple" address={MOCK_TOKENS.WETH} />
                   <label className="block text-xs text-neutral-500">
-                    ETH %
+                    WETH %
                     <input
                       type="range"
                       min={0}
                       max={100}
-                      value={ethPct}
-                      onChange={(e) => {
-                        const v = Number(e.target.value);
-                        setEthPct(v);
-                        if (wbtcPct > 100 - v) setWbtcPct(100 - v);
-                      }}
+                      value={wethPct}
+                      onChange={(e) => setAllocation(Number(e.target.value), wbtcPct, usdcPct)}
                       className="mt-2 w-full"
                     />
                   </label>
 
-                  <AllocationBar label="WBTC" value={Math.min(wbtcPct, 100 - ethPct)} bps={bpsTriplet.wbtcBps} tone="green" />
+                  <AllocationBar label="WBTC" value={wbtcPct} bps={mockTokenBps.wbtcBps} tone="green" address={MOCK_TOKENS.WBTC} />
                   <label className="block text-xs text-neutral-500">
                     WBTC %
                     <input
                       type="range"
                       min={0}
-                      max={100 - ethPct}
-                      value={Math.min(wbtcPct, 100 - ethPct)}
-                      onChange={(e) => setWbtcPct(Number(e.target.value))}
+                      max={100 - wethPct}
+                      value={wbtcPct}
+                      onChange={(e) => setAllocation(wethPct, Number(e.target.value), usdcPct)}
                       className="mt-2 w-full"
                     />
                   </label>
 
-                  <AllocationBar label="USDC" value={usdcPct} bps={bpsTriplet.usdcBps} tone="purple" />
+                  <AllocationBar label="USDC" value={usdcPct} bps={mockTokenBps.usdcBps} tone="purple" address={MOCK_TOKENS.USDC} />
+                  <label className="block text-xs text-neutral-500">
+                    USDC %
+                    <input
+                      type="range"
+                      min={0}
+                      max={100 - wethPct - wbtcPct}
+                      value={usdcPct}
+                      onChange={(e) => setAllocation(wethPct, wbtcPct, Number(e.target.value))}
+                      className="mt-2 w-full"
+                    />
+                  </label>
+
+                  <AllocationBar label="USDT" value={usdtPct} bps={mockTokenBps.usdtBps} tone="green" address={MOCK_TOKENS.USDT} />
                 </div>
               </div>
 
@@ -415,8 +483,21 @@ export function Dashboard() {
 
             <section className="grid gap-6 lg:grid-cols-3">
               <div className="rounded-xl border border-rebal-border bg-rebal-card p-5">
+                <h2 className="text-lg font-semibold text-neutral-100">Claim Test Tokens</h2>
+                <p className="mt-1 text-xs text-neutral-500">Mints 100 WETH, 0.01 WBTC, 1000 USDC, and 1000 USDT to your connected wallet.</p>
+                <button
+                  type="button"
+                  disabled={!isConnected || !walletClient || isClaiming}
+                  onClick={() => void claimTestTokens()}
+                  className="mt-4 w-full rounded-lg bg-rebal-primary px-4 py-2 text-sm font-semibold text-white transition hover:bg-rebal-primaryHover disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rebal-primary/50"
+                >
+                  {isClaiming ? "Claiming..." : "Claim test tokens"}
+                </button>
+              </div>
+
+              <div className="rounded-xl border border-rebal-border bg-rebal-card p-5">
                 <h2 className="text-lg font-semibold text-neutral-100">Save Portfolio</h2>
-                <p className="mt-1 text-xs text-neutral-500">Writes the risk mode, target bps, and executor to the contract.</p>
+                <p className="mt-1 text-xs text-neutral-500">Writes WETH, WBTC, and combined stablecoin target bps to the current agent contract.</p>
                 <button
                   type="button"
                   disabled={!executor || actionsDisabled}

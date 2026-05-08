@@ -1,14 +1,14 @@
 {
   "intent": "AI portfolio rebalancer: HTTP prices + LLM reasoning, audited on-chain logs, scheduler automation",
   "features": ["HTTP", "LLM", "Scheduler"],
-  "current_phase": 5,
+  "current_phase": 6,
   "phases": [
     { "name": "intake_projection", "status": "complete" },
     { "name": "architecture", "status": "complete" },
     { "name": "contracts", "status": "complete" },
     { "name": "frontend", "status": "complete_rebal_redesign" },
-    { "name": "deploy", "status": "pending_user_private_key" },
-    { "name": "verify", "status": "pending" }
+    { "name": "deploy", "status": "mock_tokens_and_price_feed_deployed" },
+    { "name": "verify", "status": "build_passed_browser_http_200" }
   ],
   "files_read": [
     ".cursor/skills/ritual-dapp-skills/skills/ritual/SKILL.md",
@@ -24,18 +24,30 @@
     ".codex/skills/ritual-dapp-skills/skills/ritual/SKILL.md",
     ".codex/skills/ritual-dapp-skills/skills/ritual-dapp-frontend/SKILL.md",
     ".codex/skills/ritual-dapp-skills/skills/ritual-dapp-design/SKILL.md",
+    ".codex/skills/ritual-dapp-skills/skills/ritual-dapp-http/SKILL.md",
+    ".codex/skills/ritual-dapp-skills/skills/ritual-dapp-contracts/SKILL.md",
+    ".codex/skills/ritual-dapp-skills/skills/ritual-dapp-deploy/SKILL.md",
     ".codex/skills/ritual-dapp-skills/skills/ritual-meta-verification/SKILL.md"
   ],
-  "next_file": "skills/ritual-dapp-deploy/SKILL.md",
+  "next_file": null,
   "markers": {
-    "chain_connection": false,
+    "chain_connection": true,
     "wallet_funded": false,
     "contract_compiled": true,
-    "contract_deployed": false,
+    "contract_deployed": true,
     "precompile_simulated": false,
     "precompile_settled": false,
     "frontend_renders": true,
     "frontend_connects": false,
     "e2e_complete": false
+  },
+  "artifacts": {
+    "mockTokens": {
+      "WETH": "0xF42c8B335EE1ee9eD84109C68C238E50E0EE27EC",
+      "WBTC": "0x9Ca60C0d83EAD718D43C5f2134013e2bA4Ce3ec7",
+      "USDC": "0x031CbE4EbC5aF2ca432Ae3df4DbD65053F1A6584",
+      "USDT": "0xEa9E6a94E83E4B46eA7Dff6802D269F9a4e21E02"
+    },
+    "mockPriceFeed": "0x7e2c33923f895215A07a706E1D4E99fE64386985"
   }
 }
