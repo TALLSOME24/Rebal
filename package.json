@@ -1,0 +1,33 @@
+{
+  "name": "ritual-portfolio-agent",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "compile": "hardhat compile",
+    "deploy": "hardhat run scripts/deploy.cjs --network ritual",
+    "deploy:ritual": "hardhat run scripts/deploy.cjs --network ritual"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.59.0",
+    "next": "14.2.18",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "viem": "^2.21.0",
+    "wagmi": "^2.12.0"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "@types/node": "^20.14.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "autoprefixer": "^10.4.0",
+    "dotenv": "^16.4.0",
+    "ethers": "^6.13.4",
+    "hardhat": "^2.22.0",
+    "postcss": "^8.4.0",
+    "tailwindcss": "^3.4.0",
+    "typescript": "^5.6.0"
+  }
+}

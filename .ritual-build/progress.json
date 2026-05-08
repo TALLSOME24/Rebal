@@ -1,0 +1,41 @@
+{
+  "intent": "AI portfolio rebalancer: HTTP prices + LLM reasoning, audited on-chain logs, scheduler automation",
+  "features": ["HTTP", "LLM", "Scheduler"],
+  "current_phase": 5,
+  "phases": [
+    { "name": "intake_projection", "status": "complete" },
+    { "name": "architecture", "status": "complete" },
+    { "name": "contracts", "status": "complete" },
+    { "name": "frontend", "status": "complete_rebal_redesign" },
+    { "name": "deploy", "status": "pending_user_private_key" },
+    { "name": "verify", "status": "pending" }
+  ],
+  "files_read": [
+    ".cursor/skills/ritual-dapp-skills/skills/ritual/SKILL.md",
+    ".cursor/skills/ritual-dapp-skills/skills/ritual-meta-projection/SKILL.md",
+    ".cursor/skills/ritual-dapp-skills/agents/ritual-dapp-builder.md",
+    ".cursor/skills/ritual-dapp-skills/examples/registry.json",
+    ".cursor/skills/ritual-dapp-skills/skills/ritual-dapp-scheduler/SKILL.md",
+    ".cursor/skills/ritual-dapp-skills/skills/ritual-dapp-http/SKILL.md",
+    ".cursor/skills/ritual-dapp-skills/skills/ritual-dapp-llm/SKILL.md",
+    ".cursor/skills/ritual-dapp-skills/skills/ritual-dapp-contracts/SKILL.md",
+    ".cursor/skills/ritual-dapp-skills/skills/ritual-dapp-frontend/SKILL.md",
+    ".cursor/skills/ritual-dapp-skills/skills/ritual-dapp-design/SKILL.md",
+    ".codex/skills/ritual-dapp-skills/skills/ritual/SKILL.md",
+    ".codex/skills/ritual-dapp-skills/skills/ritual-dapp-frontend/SKILL.md",
+    ".codex/skills/ritual-dapp-skills/skills/ritual-dapp-design/SKILL.md",
+    ".codex/skills/ritual-dapp-skills/skills/ritual-meta-verification/SKILL.md"
+  ],
+  "next_file": "skills/ritual-dapp-deploy/SKILL.md",
+  "markers": {
+    "chain_connection": false,
+    "wallet_funded": false,
+    "contract_compiled": true,
+    "contract_deployed": false,
+    "precompile_simulated": false,
+    "precompile_settled": false,
+    "frontend_renders": true,
+    "frontend_connects": false,
+    "e2e_complete": false
+  }
+}
