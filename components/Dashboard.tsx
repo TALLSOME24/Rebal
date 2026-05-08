@@ -289,10 +289,12 @@ export function Dashboard() {
               AI portfolio rebalancing on Ritual Chain. Targets, fee deposits, scheduler approval, and audited LLM decisions stay wired to the existing contract flow.
             </p>
           </div>
-          <div className="rounded-xl border border-rebal-border bg-rebal-card p-4">
-            <p className="text-xs text-neutral-500">Connected wallet</p>
-            <p className="mt-2 break-all font-mono text-sm text-rebal-success">{address ?? "0x53Ee4EBC921AE15E5d153E2b6AdC805A4D29cFC2"}</p>
-          </div>
+          {isConnected && address && (
+            <div className="rounded-xl border border-rebal-border bg-rebal-card p-4">
+              <p className="text-xs text-neutral-500">Connected wallet</p>
+              <p className="mt-2 break-all font-mono text-sm text-rebal-success">{address}</p>
+            </div>
+          )}
         </header>
 
         <div className="space-y-6">
