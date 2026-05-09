@@ -341,7 +341,7 @@ export function Dashboard() {
     setStatusMsg("Claiming mock tokens...");
     try {
       const claims = [
-        { symbol: "WETH", token: MOCK_TOKENS.WETH, amount: parseUnits("100", 18) },
+        { symbol: "WETH", token: MOCK_TOKENS.WETH, amount: parseUnits("1", 18) },
         { symbol: "WBTC", token: MOCK_TOKENS.WBTC, amount: parseUnits("0.01", 8) },
         { symbol: "USDC", token: MOCK_TOKENS.USDC, amount: parseUnits("1000", 6) },
         { symbol: "USDT", token: MOCK_TOKENS.USDT, amount: parseUnits("1000", 6) },
@@ -567,7 +567,7 @@ export function Dashboard() {
             <section className="grid gap-6 lg:grid-cols-3">
               <div className="rounded-xl border border-rebal-border bg-rebal-card p-5">
                 <h2 className="text-lg font-semibold text-neutral-100">Claim Test Tokens</h2>
-                <p className="mt-1 text-xs text-neutral-500">Mints 100 WETH, 0.01 WBTC, 1000 USDC, and 1000 USDT to your connected wallet.</p>
+                <p className="mt-1 text-xs text-neutral-500">Mints 1 WETH, 0.01 WBTC, 1000 USDC, and 1000 USDT to your connected wallet.</p>
                 <button
                   type="button"
                   disabled={!isConnected || !walletClient || isClaiming}
