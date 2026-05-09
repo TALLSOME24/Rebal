@@ -4,16 +4,18 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   useAccount,
   useReadContract,
+  useReadContracts,
   useWriteContract,
   useWaitForTransactionReceipt,
   usePublicClient,
   useWalletClient,
 } from "wagmi";
-import { formatEther, parseEther, parseUnits, type Address, type Hex, hexToString } from "viem";
+import { formatEther, formatUnits, parseEther, parseUnits, zeroAddress, type Address, type Hex, hexToString } from "viem";
 import { portfolioAgentAbi } from "@/lib/abi/portfolioAgent";
 import { mockErc20Abi } from "@/lib/abi/mockERC20";
+import { mockPriceFeedAbi } from "@/lib/abi/mockPriceFeed";
 import { schedulerAbi } from "@/lib/abi/scheduler";
-import { MOCK_TOKENS, portfolioAgentAddress, SCHEDULER } from "@/lib/constants";
+import { MOCK_PRICE_FEED, MOCK_TOKENS, portfolioAgentAddress, SCHEDULER } from "@/lib/constants";
 import { fetchHttpExecutor } from "@/lib/tee";
 import { ChainGuard } from "./ChainGuard";
 
@@ -24,6 +26,20 @@ const RISK_MODES = [
 ] as const;
 
 const PRECOMPILE_TAGS = ["HTTP 0x0801", "LLM 0x0802", "Scheduler"] as const;
+
+const TOKEN_DECIMALS = {
+  WETH: 18,
+  WBTC: 8,
+  USDC: 6,
+  USDT: 6,
+} as const;
+
+const USD_FORMATTER = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
 
 type DecisionRow = {
   tx_hash: Hex;
@@ -46,6 +62,29 @@ type AllocationBarProps = {
 function shortHex(value?: string, head = 6, tail = 4) {
   if (!value) return "0x--";
   return `${value.slice(0, head)}...${value.slice(-tail)}`;
+}
+
+function parseCoinGeckoPrices(body: string) {
+  if (!body) return null;
+  try {
+    const json = JSON.parse(body) as {
+      ethereum?: { usd?: number };
+      bitcoin?: { usd?: number };
+      "usd-coin"?: { usd?: number };
+      tether?: { usd?: number };
+    };
+
+    const prices = {
+      WETH: json.ethereum?.usd,
+      WBTC: json.bitcoin?.usd,
+      USDC: json["usd-coin"]?.usd,
+      USDT: json.tether?.usd,
+    };
+
+    return Object.values(prices).every((price) => typeof price === "number") ? (prices as Record<keyof typeof TOKEN_DECIMALS, number>) : null;
+  } catch {
+    return null;
+  }
 }
 
 function StatCard({ label, value, tone }: { label: string; value: string; tone?: "green" | "purple" | "red" }) {
@@ -138,6 +177,23 @@ export function Dashboard() {
     query: { enabled: !!agent && !!address, refetchInterval: 15_000 },
   });
 
+  const { data: mockPriceBody } = useReadContract({
+    address: MOCK_PRICE_FEED,
+    abi: mockPriceFeedAbi,
+    functionName: "latestBody",
+    query: { refetchInterval: 15_000 },
+  });
+
+  const { data: mockTokenBalances } = useReadContracts({
+    contracts: [
+      { address: MOCK_TOKENS.WETH, abi: mockErc20Abi, functionName: "balanceOf", args: [address ?? zeroAddress] },
+      { address: MOCK_TOKENS.WBTC, abi: mockErc20Abi, functionName: "balanceOf", args: [address ?? zeroAddress] },
+      { address: MOCK_TOKENS.USDC, abi: mockErc20Abi, functionName: "balanceOf", args: [address ?? zeroAddress] },
+      { address: MOCK_TOKENS.USDT, abi: mockErc20Abi, functionName: "balanceOf", args: [address ?? zeroAddress] },
+    ],
+    query: { enabled: !!address, refetchInterval: 12_000 },
+  });
+
   const lastPricesText = useMemo(() => {
     if (!lastPrices || (lastPrices as Hex) === "0x") return "";
     try {
@@ -146,6 +202,33 @@ export function Dashboard() {
       return String(lastPrices);
     }
   }, [lastPrices]);
+
+  const mockPriceText = useMemo(() => {
+    if (!mockPriceBody || (mockPriceBody as Hex) === "0x") return "";
+    try {
+      return hexToString(mockPriceBody as Hex);
+    } catch {
+      return "";
+    }
+  }, [mockPriceBody]);
+
+  const portfolioValue = useMemo(() => {
+    if (!address || !mockTokenBalances) return null;
+    const prices = parseCoinGeckoPrices(mockPriceText);
+    if (!prices) return null;
+
+    const [weth, wbtc, usdc, usdt] = mockTokenBalances;
+    if (weth.status !== "success" || wbtc.status !== "success" || usdc.status !== "success" || usdt.status !== "success") return null;
+
+    return (
+      Number(formatUnits(weth.result as bigint, TOKEN_DECIMALS.WETH)) * prices.WETH +
+      Number(formatUnits(wbtc.result as bigint, TOKEN_DECIMALS.WBTC)) * prices.WBTC +
+      Number(formatUnits(usdc.result as bigint, TOKEN_DECIMALS.USDC)) * prices.USDC +
+      Number(formatUnits(usdt.result as bigint, TOKEN_DECIMALS.USDT)) * prices.USDT
+    );
+  }, [address, mockPriceText, mockTokenBalances]);
+
+  const portfolioValueText = portfolioValue === null ? "$--" : USD_FORMATTER.format(portfolioValue);
 
   const { writeContract, data: hash, isPending, error: writeError } = useWriteContract();
   const { isLoading: confirming, isSuccess } = useWaitForTransactionReceipt({
@@ -376,7 +459,7 @@ export function Dashboard() {
             )}
 
             <section className="grid overflow-hidden rounded-xl border border-rebal-border bg-rebal-card sm:grid-cols-2 lg:grid-cols-4">
-              <StatCard label="Portfolio Value" value={lastPricesText ? "Oracle live" : "$--"} tone={lastPricesText ? "green" : undefined} />
+              <StatCard label="Portfolio Value" value={portfolioValueText} tone={portfolioValue === null ? undefined : "green"} />
               <StatCard
                 label="RitualWallet"
                 value={ritualBal !== undefined ? `${Number(formatEther(ritualBal as bigint)).toFixed(4)} RITUAL` : "--"}
