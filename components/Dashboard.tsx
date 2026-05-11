@@ -40,6 +40,9 @@ const USD_FORMATTER = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 2,
 });
 
+/** Native RITUAL on the PortfolioAgent contract below this warns users to fund ticks. */
+const AGENT_CONTRACT_RITUAL_LOW_WEI = parseEther("0.05");
+
 type DecisionRow = {
   tx_hash: Hex;
   cycleId: bigint;
@@ -155,6 +158,9 @@ export function Dashboard() {
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [isClaiming, setIsClaiming] = useState(false);
   const [coinGeckoPricesBody, setCoinGeckoPricesBody] = useState("");
+  const [agentContractBalanceWei, setAgentContractBalanceWei] = useState<bigint | null>(null);
+  const [fundAgentAmt, setFundAgentAmt] = useState("0.1");
+  const [isFundingAgent, setIsFundingAgent] = useState(false);
 
   const { data: portfolio } = useReadContract({
     address: agent,
@@ -247,6 +253,68 @@ export function Dashboard() {
     const id = setInterval(() => void fetchPrices(), 60_000);
     return () => clearInterval(id);
   }, []);
+
+  useEffect(() => {
+    if (!publicClient || !agent) {
+      setAgentContractBalanceWei(null);
+      return;
+    }
+    let cancelled = false;
+    const refreshAgentContractBalance = async () => {
+      try {
+        const wei = await publicClient.getBalance({ address: agent });
+        if (!cancelled) setAgentContractBalanceWei(wei);
+      } catch {
+        if (!cancelled) setAgentContractBalanceWei(null);
+      }
+    };
+    void refreshAgentContractBalance();
+    const id = setInterval(() => void refreshAgentContractBalance(), 12_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [publicClient, agent]);
+
+  const agentContractBalanceLow =
+    agent !== undefined && agentContractBalanceWei !== null && agentContractBalanceWei < AGENT_CONTRACT_RITUAL_LOW_WEI;
+
+  const agentContractBalanceStatText = !agent
+    ? "--"
+    : agentContractBalanceWei === null
+      ? "…"
+      : `${Number(formatEther(agentContractBalanceWei)).toFixed(4)} RITUAL`;
+
+  const fundAgent = async () => {
+    if (!walletClient || !publicClient || !agent || !isConnected) return;
+    let value: bigint;
+    try {
+      value = parseEther(fundAgentAmt.trim() || "0");
+    } catch {
+      setStatusMsg("Invalid fund amount.");
+      return;
+    }
+    if (value <= 0n) {
+      setStatusMsg("Fund amount must be greater than zero.");
+      return;
+    }
+    setIsFundingAgent(true);
+    setStatusMsg("Sending RITUAL to agent contract…");
+    try {
+      const txHash = await walletClient.sendTransaction({
+        to: agent,
+        value,
+      });
+      await publicClient.waitForTransactionReceipt({ hash: txHash });
+      setStatusMsg(`Funded agent: ${shortHex(txHash, 10, 4)}`);
+      const wei = await publicClient.getBalance({ address: agent });
+      setAgentContractBalanceWei(wei);
+    } catch (e) {
+      setStatusMsg(e instanceof Error ? e.message : "Fund agent failed.");
+    } finally {
+      setIsFundingAgent(false);
+    }
+  };
 
   const loadExecutor = async () => {
     setExecutorLoadError(null);
@@ -462,16 +530,63 @@ export function Dashboard() {
               </section>
             )}
 
-            <section className="grid overflow-hidden rounded-xl border border-rebal-border bg-rebal-card sm:grid-cols-2 lg:grid-cols-4">
+            <section className="grid overflow-hidden rounded-xl border border-rebal-border bg-rebal-card sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
               <StatCard label="Portfolio Value" value={portfolioValueText} tone={portfolioValue === null ? undefined : "green"} />
               <StatCard
                 label="RitualWallet"
                 value={ritualBal !== undefined ? `${Number(formatEther(ritualBal as bigint)).toFixed(4)} RITUAL` : "--"}
                 tone="green"
               />
+              <StatCard
+                label="Agent contract"
+                value={agentContractBalanceStatText}
+                tone={
+                  !agent || agentContractBalanceWei === null
+                    ? undefined
+                    : agentContractBalanceLow
+                      ? "red"
+                      : "green"
+                }
+              />
               <StatCard label="Last Rebalance" value={lastRebalance} tone={decisions[0]?.llmHasError ? "red" : "purple"} />
               <StatCard label="Agent Status" value={agentStatus} tone={executor ? "green" : "purple"} />
             </section>
+
+            {agent && (
+              <section className="rounded-xl border border-rebal-border bg-rebal-card p-5">
+                <h2 className="text-lg font-semibold text-neutral-100">Agent Contract Balance</h2>
+                <p className="mt-1 text-xs text-neutral-500">
+                  Native RITUAL held by the PortfolioAgent contract for scheduled ticks. This is separate from your RitualWallet deposit above.
+                </p>
+                <p className="mt-3 font-mono text-sm text-neutral-200">
+                  {agentContractBalanceWei === null ? "Loading…" : `${Number(formatEther(agentContractBalanceWei)).toFixed(4)} RITUAL`}
+                </p>
+                {agentContractBalanceLow && (
+                  <p className="mt-3 rounded-lg border border-rebal-danger/40 bg-rebal-danger/10 px-3 py-2 text-sm text-rebal-danger">
+                    Contract balance is under 0.05 RITUAL. Fund the agent so automated ticks can pay for execution.
+                  </p>
+                )}
+                <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+                  <label className="text-xs text-neutral-500">
+                    Amount (RITUAL)
+                    <input
+                      value={fundAgentAmt}
+                      onChange={(e) => setFundAgentAmt(e.target.value)}
+                      disabled={!isConnected || isFundingAgent}
+                      className="mt-1 w-full rounded-lg border border-rebal-border bg-[#0D0D0D] px-3 py-2 font-mono text-sm text-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rebal-primary/50 disabled:opacity-40"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    disabled={!isConnected || !walletClient || isFundingAgent}
+                    onClick={() => void fundAgent()}
+                    className="rounded-lg bg-rebal-primary px-4 py-2 text-sm font-semibold text-white transition hover:bg-rebal-primaryHover disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rebal-primary/50"
+                  >
+                    {isFundingAgent ? "Sending…" : "Fund agent"}
+                  </button>
+                </div>
+              </section>
+            )}
 
             <section className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
               <div className="rounded-xl border border-rebal-border bg-rebal-card p-5">
