@@ -13,9 +13,8 @@ import {
 import { formatEther, formatUnits, parseEther, parseUnits, zeroAddress, type Address, type Hex, hexToString } from "viem";
 import { portfolioAgentAbi } from "@/lib/abi/portfolioAgent";
 import { mockErc20Abi } from "@/lib/abi/mockERC20";
-import { mockPriceFeedAbi } from "@/lib/abi/mockPriceFeed";
 import { schedulerAbi } from "@/lib/abi/scheduler";
-import { MOCK_PRICE_FEED, MOCK_TOKENS, portfolioAgentAddress, SCHEDULER } from "@/lib/constants";
+import { MOCK_TOKENS, portfolioAgentAddress, SCHEDULER } from "@/lib/constants";
 import { fetchHttpExecutor } from "@/lib/tee";
 import { ChainGuard } from "./ChainGuard";
 
@@ -152,6 +151,7 @@ export function Dashboard() {
   const [decisions, setDecisions] = useState<DecisionRow[]>([]);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [isClaiming, setIsClaiming] = useState(false);
+  const [coinGeckoPricesBody, setCoinGeckoPricesBody] = useState("");
 
   const { data: portfolio } = useReadContract({
     address: agent,
@@ -177,13 +177,6 @@ export function Dashboard() {
     query: { enabled: !!agent && !!address, refetchInterval: 15_000 },
   });
 
-  const { data: mockPriceBody } = useReadContract({
-    address: MOCK_PRICE_FEED,
-    abi: mockPriceFeedAbi,
-    functionName: "latestBody",
-    query: { refetchInterval: 15_000 },
-  });
-
   const { data: mockTokenBalances } = useReadContracts({
     contracts: [
       { address: MOCK_TOKENS.WETH, abi: mockErc20Abi, functionName: "balanceOf", args: [address ?? zeroAddress] },
@@ -203,18 +196,9 @@ export function Dashboard() {
     }
   }, [lastPrices]);
 
-  const mockPriceText = useMemo(() => {
-    if (!mockPriceBody || (mockPriceBody as Hex) === "0x") return "";
-    try {
-      return hexToString(mockPriceBody as Hex);
-    } catch {
-      return "";
-    }
-  }, [mockPriceBody]);
-
   const portfolioValue = useMemo(() => {
     if (!address || !mockTokenBalances) return null;
-    const prices = parseCoinGeckoPrices(mockPriceText);
+    const prices = parseCoinGeckoPrices(coinGeckoPricesBody);
     if (!prices) return null;
 
     const [weth, wbtc, usdc, usdt] = mockTokenBalances;
@@ -226,7 +210,7 @@ export function Dashboard() {
       Number(formatUnits(usdc.result as bigint, TOKEN_DECIMALS.USDC)) * prices.USDC +
       Number(formatUnits(usdt.result as bigint, TOKEN_DECIMALS.USDT)) * prices.USDT
     );
-  }, [address, mockPriceText, mockTokenBalances]);
+  }, [address, coinGeckoPricesBody, mockTokenBalances]);
 
   const portfolioValueText = portfolioValue === null ? "$--" : USD_FORMATTER.format(portfolioValue);
 
@@ -243,6 +227,23 @@ export function Dashboard() {
   useEffect(() => {
     if (writeError) setStatusMsg(writeError.message);
   }, [writeError]);
+
+  useEffect(() => {
+    const url =
+      "https://api.coingecko.com/api/v3/simple/price?ids=ethereum,bitcoin,usd-coin,tether&vs_currencies=usd";
+    const fetchPrices = async () => {
+      try {
+        const res = await fetch(url);
+        if (!res.ok) return;
+        setCoinGeckoPricesBody(await res.text());
+      } catch {
+        /* keep previous snapshot on transient errors */
+      }
+    };
+    void fetchPrices();
+    const id = setInterval(() => void fetchPrices(), 60_000);
+    return () => clearInterval(id);
+  }, []);
 
   const loadExecutor = async () => {
     setExecutorLoadError(null);
