@@ -52,6 +52,8 @@ type DecisionRow = {
 
 type AllocationBarProps = {
   label: string;
+  /** Gray hint next to label, e.g. "(remainder)" for auto-calculated share */
+  labelSuffix?: string;
   value: number;
   bps: number;
   tone: "purple" | "green";
@@ -98,7 +100,7 @@ function StatCard({ label, value, tone }: { label: string; value: string; tone?:
   );
 }
 
-function AllocationBar({ label, value, bps, tone, address }: AllocationBarProps) {
+function AllocationBar({ label, labelSuffix, value, bps, tone, address }: AllocationBarProps) {
   const barColor = tone === "green" ? "bg-rebal-success" : "bg-rebal-primary";
 
   return (
@@ -106,6 +108,7 @@ function AllocationBar({ label, value, bps, tone, address }: AllocationBarProps)
       <div className="flex items-center justify-between gap-3">
         <span className="text-sm text-neutral-300">
           {label}
+          {labelSuffix ? <span className="ml-1.5 text-xs font-normal text-neutral-500">{labelSuffix}</span> : null}
           {address && <span className="ml-2 font-mono text-[10px] text-neutral-500">{shortHex(address, 8, 4)}</span>}
         </span>
         <span className="font-mono text-xs text-neutral-400">
@@ -485,46 +488,64 @@ export function Dashboard() {
                 </div>
 
                 <div className="space-y-5">
-                  <AllocationBar label="WETH" value={wethPct} bps={mockTokenBps.wethBps} tone="purple" address={MOCK_TOKENS.WETH} />
-                  <label className="block text-xs text-neutral-500">
-                    WETH %
-                    <input
-                      type="range"
-                      min={0}
-                      max={100}
-                      value={wethPct}
-                      onChange={(e) => setAllocation(Number(e.target.value), wbtcPct, usdcPct)}
-                      className="mt-2 w-full"
-                    />
-                  </label>
+                  <div className="space-y-2">
+                    <AllocationBar label="WETH" value={wethPct} bps={mockTokenBps.wethBps} tone="purple" address={MOCK_TOKENS.WETH} />
+                    <label className="block text-xs font-medium text-neutral-400">
+                      WETH slider — set allocation (%)
+                      <input
+                        type="range"
+                        min={0}
+                        max={100}
+                        value={wethPct}
+                        onChange={(e) => setAllocation(Number(e.target.value), wbtcPct, usdcPct)}
+                        className="mt-2 w-full"
+                        aria-label="WETH allocation percent"
+                      />
+                    </label>
+                  </div>
 
-                  <AllocationBar label="WBTC" value={wbtcPct} bps={mockTokenBps.wbtcBps} tone="green" address={MOCK_TOKENS.WBTC} />
-                  <label className="block text-xs text-neutral-500">
-                    WBTC %
-                    <input
-                      type="range"
-                      min={0}
-                      max={100 - wethPct}
-                      value={wbtcPct}
-                      onChange={(e) => setAllocation(wethPct, Number(e.target.value), usdcPct)}
-                      className="mt-2 w-full"
-                    />
-                  </label>
+                  <div className="space-y-2">
+                    <AllocationBar label="WBTC" value={wbtcPct} bps={mockTokenBps.wbtcBps} tone="green" address={MOCK_TOKENS.WBTC} />
+                    <label className="block text-xs font-medium text-neutral-400">
+                      WBTC slider — set allocation (%)
+                      <input
+                        type="range"
+                        min={0}
+                        max={100 - wethPct}
+                        value={wbtcPct}
+                        onChange={(e) => setAllocation(wethPct, Number(e.target.value), usdcPct)}
+                        className="mt-2 w-full"
+                        aria-label="WBTC allocation percent"
+                      />
+                    </label>
+                  </div>
 
-                  <AllocationBar label="USDC" value={usdcPct} bps={mockTokenBps.usdcBps} tone="purple" address={MOCK_TOKENS.USDC} />
-                  <label className="block text-xs text-neutral-500">
-                    USDC %
-                    <input
-                      type="range"
-                      min={0}
-                      max={100 - wethPct - wbtcPct}
-                      value={usdcPct}
-                      onChange={(e) => setAllocation(wethPct, wbtcPct, Number(e.target.value))}
-                      className="mt-2 w-full"
-                    />
-                  </label>
+                  <div className="space-y-2">
+                    <AllocationBar label="USDC" value={usdcPct} bps={mockTokenBps.usdcBps} tone="purple" address={MOCK_TOKENS.USDC} />
+                    <label className="block text-xs font-medium text-neutral-400">
+                      USDC slider — set allocation (%)
+                      <input
+                        type="range"
+                        min={0}
+                        max={100 - wethPct - wbtcPct}
+                        value={usdcPct}
+                        onChange={(e) => setAllocation(wethPct, wbtcPct, Number(e.target.value))}
+                        className="mt-2 w-full"
+                        aria-label="USDC allocation percent"
+                      />
+                    </label>
+                  </div>
 
-                  <AllocationBar label="USDT" value={usdtPct} bps={mockTokenBps.usdtBps} tone="green" address={MOCK_TOKENS.USDT} />
+                  <div className="space-y-2">
+                    <AllocationBar
+                      label="USDT"
+                      labelSuffix="(remainder)"
+                      value={usdtPct}
+                      bps={mockTokenBps.usdtBps}
+                      tone="green"
+                      address={MOCK_TOKENS.USDT}
+                    />
+                  </div>
                 </div>
               </div>
 
