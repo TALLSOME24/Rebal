@@ -149,8 +149,8 @@ export function Dashboard() {
 
   const [freq, setFreq] = useState(80);
   const [cycles, setCycles] = useState(12);
-  const [gasLimit, setGasLimit] = useState(900000);
-  const [schedulerTtl, setSchedulerTtl] = useState(250);
+  const [gasLimit, setGasLimit] = useState(3000000);
+  const [schedulerTtl, setSchedulerTtl] = useState(300);
   const [depositAmt, setDepositAmt] = useState("0.02");
   const [lockBlocks, setLockBlocks] = useState("50000");
 
