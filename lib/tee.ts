@@ -1,7 +1,7 @@
 import { createPublicClient, http } from "viem";
 import type { Address } from "viem";
 import { ritualChain } from "./chain";
-import { HTTP_CALL_CAPABILITY, TEE_SERVICE_REGISTRY } from "./constants";
+import { HTTP_CALL_CAPABILITY, LLM_CAPABILITY, TEE_SERVICE_REGISTRY } from "./constants";
 
 const registryAbi = [
   {
@@ -51,4 +51,22 @@ export async function fetchHttpExecutor(): Promise<Address> {
   });
   if (!services.length) throw new Error("No HTTP_CALL executors in registry");
   return services[0].node.teeAddress as Address;
+}
+
+// LLM executor uses capability 1 — different from HTTP capability 0
+export async function fetchLlmExecutor(): Promise<Address> {
+  const services = await publicClient.readContract({
+    address: TEE_SERVICE_REGISTRY,
+    abi: registryAbi,
+    functionName: "getServicesByCapability",
+    args: [LLM_CAPABILITY, true],
+  });
+  if (!services.length) throw new Error("No LLM executors in registry");
+  return services[0].node.teeAddress as Address;
+}
+
+// Fetches the LLM executor — use this for registerPortfolio
+// so the contract uses the correct executor for LLM ticks
+export async function fetchExecutorForPortfolio(): Promise<Address> {
+  return fetchLlmExecutor();
 }

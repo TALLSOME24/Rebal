@@ -15,7 +15,7 @@ import { portfolioAgentAbi } from "@/lib/abi/portfolioAgent";
 import { mockErc20Abi } from "@/lib/abi/mockERC20";
 import { schedulerAbi } from "@/lib/abi/scheduler";
 import { MOCK_TOKENS, portfolioAgentAddress, SCHEDULER } from "@/lib/constants";
-import { fetchHttpExecutor } from "@/lib/tee";
+import { fetchHttpExecutor, fetchLlmExecutor } from "../lib/tee";
 import { ChainGuard } from "./ChainGuard";
 
 const RISK_MODES = [
@@ -319,7 +319,7 @@ export function Dashboard() {
   const loadExecutor = async () => {
     setExecutorLoadError(null);
     try {
-      const ex = await fetchHttpExecutor();
+      const ex = await fetchLlmExecutor();
       setExecutor(ex);
     } catch (e) {
       setExecutorLoadError(e instanceof Error ? e.message : "Failed registry read");
