@@ -26,6 +26,7 @@ interface IRitualWallet {
     function deposit(uint256 lockDuration) external payable;
     function depositFor(address user, uint256 lockDuration) external payable;
     function balanceOf(address account) external view returns (uint256);
+    function lockUntil(address account) external view returns (uint256);
 }
 
 interface IScheduler {
@@ -161,15 +162,19 @@ contract PortfolioAgent {
         return IRitualWallet(RITUAL_WALLET).balanceOf(user);
     }
 
-    /// @notice Deposit RITUAL into RitualWallet on behalf of msg.sender.
+    /// @notice Read this contract's RitualWallet balance used by scheduled executions.
+    function contractRitualBalance() external view returns (uint256) {
+        return IRitualWallet(RITUAL_WALLET).balanceOf(address(this));
+    }
+
+    /// @notice Deposit RITUAL into this contract's RitualWallet balance for Scheduler fees.
+    ///         Ritual Scheduler calls are made by this contract, so the canonical
+    ///         Solidity integration passes address(this) as payer.
     ///         NOTE: LLM escrow for GLM-4.7-FP8 is ~0.31 RITUAL per in-flight call.
     ///         Deposit at least 0.4 RITUAL before starting automation.
     function depositFeesForCaller(uint256 lockDurationBlocks) external payable {
         require(msg.value > 0, "value required");
-        (bool ok,) = RITUAL_WALLET.call{value: msg.value}(
-            abi.encodeWithSignature("depositFor(address,uint256)", msg.sender, lockDurationBlocks)
-        );
-        require(ok, "depositFor failed");
+        IRitualWallet(RITUAL_WALLET).deposit{value: msg.value}(lockDurationBlocks);
         emit FeesDepositFor(msg.sender, msg.value);
     }
 
@@ -227,13 +232,26 @@ contract PortfolioAgent {
         require(schedulerTtl >= MIN_TTL_BLOCKS, "ttl too low: min 300 blocks");
 
         uint32 totalRuns = numCycles * 2; // each cycle = 1 HTTP tick + 1 LLM tick
+        uint256 maxCostPerExecution = uint256(gasLimit) * maxFeePerGas;
+        require(
+            IRitualWallet(RITUAL_WALLET).balanceOf(address(this)) >= maxCostPerExecution,
+            "contract fee balance too low"
+        );
+        require(
+            IRitualWallet(RITUAL_WALLET).lockUntil(address(this)) >= block.number + schedulerTtl,
+            "contract fee lock too short"
+        );
 
-        // Cancel existing schedule if any
-        if (p.scheduleId != 0) {
-            scheduler.cancel(p.scheduleId);
-            emit AutomationCancelled(msg.sender, p.scheduleId);
-            p.scheduleId = 0;
-        }
+        // Cancel existing schedule if any — use try/catch since
+// scheduler rejects cancelling already-expired schedules
+if (p.scheduleId != 0) {
+    try scheduler.cancel(p.scheduleId) {
+        emit AutomationCancelled(msg.sender, p.scheduleId);
+    } catch {
+        // Schedule already expired or consumed — safe to ignore
+    }
+    p.scheduleId = 0;
+}
 
         // FIX [1]: Reset tick index so the new schedule starts from tick 0 (HTTP).
         tickIndex[msg.sender] = 0;
@@ -255,7 +273,7 @@ contract PortfolioAgent {
             maxFeePerGas,
             0,           // maxPriorityFeePerGas (0 = no tip required)
             0,           // value
-            msg.sender   // payer (RitualWallet balance of msg.sender is debited)
+            address(this) // payer; matches Scheduler msg.sender, no approval path needed
         );
 
         p.scheduleId = callId;

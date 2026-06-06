@@ -173,9 +173,8 @@ export function Dashboard() {
   const { data: ritualBal } = useReadContract({
     address: agent,
     abi: portfolioAgentAbi,
-    functionName: "ritualBalance",
-    args: address ? [address] : undefined,
-    query: { enabled: !!agent && !!address, refetchInterval: 12_000 },
+    functionName: "contractRitualBalance",
+    query: { enabled: !!agent, refetchInterval: 12_000 },
   });
 
   const { data: lastPrices } = useReadContract({

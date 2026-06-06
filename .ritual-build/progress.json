@@ -8,7 +8,8 @@
     { "name": "contracts", "status": "complete" },
     { "name": "frontend", "status": "complete_rebal_redesign" },
     { "name": "deploy", "status": "mock_tokens_and_price_feed_deployed" },
-    { "name": "verify", "status": "build_passed_browser_http_200" }
+    { "name": "verify", "status": "scheduler_fix_compile_tsc_build_passed" },
+    { "name": "debug_redeploy", "status": "complete_v4_deployed_0x971681AB0aeE3E4ED237305618CB95e2cEA3f4db" }
   ],
   "files_read": [
     ".cursor/skills/ritual-dapp-skills/skills/ritual/SKILL.md",
@@ -27,6 +28,8 @@
     ".codex/skills/ritual-dapp-skills/skills/ritual-dapp-http/SKILL.md",
     ".codex/skills/ritual-dapp-skills/skills/ritual-dapp-contracts/SKILL.md",
     ".codex/skills/ritual-dapp-skills/skills/ritual-dapp-deploy/SKILL.md",
+    ".codex/skills/ritual-dapp-skills/skills/ritual-dapp-scheduler/SKILL.md",
+    ".codex/skills/ritual-dapp-skills/skills/ritual-dapp-wallet/SKILL.md",
     ".codex/skills/ritual-dapp-skills/skills/ritual-meta-verification/SKILL.md"
   ],
   "next_file": null,
@@ -35,6 +38,7 @@
     "wallet_funded": false,
     "contract_compiled": true,
     "contract_deployed": true,
+    "v4_deployed": "0x971681AB0aeE3E4ED237305618CB95e2cEA3f4db",
     "precompile_simulated": false,
     "precompile_settled": false,
     "frontend_renders": true,

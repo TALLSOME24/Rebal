@@ -54,6 +54,13 @@ export const portfolioAgentAbi = [
     outputs: [{ type: "uint256" }],
   },
   {
+    name: "contractRitualBalance",
+    type: "function",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "uint256" }],
+  },
+  {
     name: "portfolios",
     type: "function",
     stateMutability: "view",
@@ -74,6 +81,41 @@ export const portfolioAgentAbi = [
     stateMutability: "view",
     inputs: [{ name: "", type: "address" }],
     outputs: [{ type: "uint256" }],
+  },
+  {
+    name: "tickIndex",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "", type: "address" }],
+    outputs: [{ type: "uint256" }],
+  },
+  {
+    type: "event",
+    name: "TickFailed",
+    inputs: [
+      { name: "owner", type: "address", indexed: true },
+      { name: "tickIdx", type: "uint256", indexed: true },
+      { name: "phase", type: "string", indexed: false },
+      { name: "reason", type: "string", indexed: false },
+    ],
+  },
+  {
+    type: "event",
+    name: "AutomationScheduled",
+    inputs: [
+      { name: "owner", type: "address", indexed: true },
+      { name: "callId", type: "uint256", indexed: true },
+      { name: "frequency", type: "uint32", indexed: false },
+      { name: "numCalls", type: "uint32", indexed: false },
+    ],
+  },
+  {
+    type: "event",
+    name: "AutomationCancelled",
+    inputs: [
+      { name: "owner", type: "address", indexed: true },
+      { name: "callId", type: "uint256", indexed: true },
+    ],
   },
   {
     name: "COINGECKO_URL",
