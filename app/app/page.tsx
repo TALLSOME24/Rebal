@@ -1,9 +1,8 @@
 "use client";
 
-import { Suspense } from "react";
+import { Suspense, Component, type ReactNode } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Nav } from "@/components/Nav";
-import { ChainGuard } from "@/components/ChainGuard";
 
 // Direct static imports — React.lazy causes blank renders in Next.js App Router SSR
 import { Dashboard } from "@/components/tabs/Dashboard";
@@ -14,6 +13,27 @@ import { Yield } from "@/components/tabs/Yield";
 import { Dex } from "@/components/tabs/Dex";
 import { Accounts } from "@/components/tabs/Accounts";
 import { Settings } from "@/components/tabs/Settings";
+
+class TabErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="rounded-2xl border border-red-500/30 bg-red-500/10 p-6">
+          <p className="font-mono text-sm text-red-400">Tab render error: {this.state.error.message}</p>
+          <pre className="mt-2 overflow-auto font-mono text-[10px] text-red-300/60">{this.state.error.stack}</pre>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 const TABS = [
   { id: "dashboard", label: "Dashboard" },
@@ -47,6 +67,7 @@ function AppShell() {
   const router = useRouter();
   const rawTab = searchParams?.get("tab") ?? "dashboard";
   const activeTab = (TABS.find((t) => t.id === rawTab)?.id ?? "dashboard") as TabId;
+  console.log("[AppShell] activeTab:", activeTab);
 
   const setTab = (id: TabId) => {
     router.push(`/app?tab=${id}`, { scroll: false });
@@ -93,9 +114,9 @@ function AppShell() {
 
       {/* Tab body */}
       <div className="mx-auto max-w-7xl px-4 py-6">
-        <ChainGuard>
+        <TabErrorBoundary>
           <TabContent tab={activeTab} />
-        </ChainGuard>
+        </TabErrorBoundary>
       </div>
     </div>
   );

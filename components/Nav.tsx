@@ -117,9 +117,11 @@ export function Nav({ variant }: { variant: NavVariant }) {
       ? "bg-transparent"
       : "border-b"
 
+  const positionClass = variant === "home" ? "relative" : "sticky top-0 z-40";
+
   return (
     <nav
-      className={`sticky top-0 z-40 w-full ${navBg}`}
+      className={`${positionClass} w-full ${navBg}`}
       style={
         variant === "app"
           ? {
