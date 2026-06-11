@@ -173,8 +173,9 @@ export function Yield() {
         <button
           type="button"
           onClick={() => {
-            localStorage.setItem("rebal-yield-settings", JSON.stringify({ minApy, rotateBelow, maxSupply }));
-            alert("Settings saved to localStorage");
+            if (typeof window !== "undefined") {
+              localStorage.setItem("rebal-yield-settings", JSON.stringify({ minApy, rotateBelow, maxSupply }));
+            }
           }}
           className="mt-4 rounded-xl px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90"
           style={{ backgroundColor: "#5B4FE8" }}

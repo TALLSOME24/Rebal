@@ -1,18 +1,19 @@
 "use client";
 
-import { Suspense, lazy } from "react";
+import { Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Nav } from "@/components/Nav";
 import { ChainGuard } from "@/components/ChainGuard";
 
-const DashboardTab = lazy(() => import("@/components/tabs/Dashboard").then((m) => ({ default: m.Dashboard })));
-const RebalanceTab = lazy(() => import("@/components/tabs/Rebalance").then((m) => ({ default: m.Rebalance })));
-const AgentTab = lazy(() => import("@/components/tabs/Agent").then((m) => ({ default: m.Agent })));
-const TokensTab = lazy(() => import("@/components/tabs/Tokens").then((m) => ({ default: m.Tokens })));
-const YieldTab = lazy(() => import("@/components/tabs/Yield").then((m) => ({ default: m.Yield })));
-const DexTab = lazy(() => import("@/components/tabs/Dex").then((m) => ({ default: m.Dex })));
-const AccountsTab = lazy(() => import("@/components/tabs/Accounts").then((m) => ({ default: m.Accounts })));
-const SettingsTab = lazy(() => import("@/components/tabs/Settings").then((m) => ({ default: m.Settings })));
+// Direct static imports — React.lazy causes blank renders in Next.js App Router SSR
+import { Dashboard } from "@/components/tabs/Dashboard";
+import { Rebalance } from "@/components/tabs/Rebalance";
+import { Agent } from "@/components/tabs/Agent";
+import { Tokens } from "@/components/tabs/Tokens";
+import { Yield } from "@/components/tabs/Yield";
+import { Dex } from "@/components/tabs/Dex";
+import { Accounts } from "@/components/tabs/Accounts";
+import { Settings } from "@/components/tabs/Settings";
 
 const TABS = [
   { id: "dashboard", label: "Dashboard" },
@@ -27,26 +28,17 @@ const TABS = [
 
 type TabId = (typeof TABS)[number]["id"];
 
-const TAB_SPINNER = (
-  <div className="flex h-40 items-center justify-center">
-    <span
-      className="h-6 w-6 animate-spin rounded-full border-2"
-      style={{ borderColor: "#5B4FE8", borderTopColor: "transparent" }}
-    />
-  </div>
-);
-
 function TabContent({ tab }: { tab: TabId }) {
   switch (tab) {
-    case "dashboard": return <Suspense fallback={TAB_SPINNER}><DashboardTab /></Suspense>;
-    case "rebalance": return <Suspense fallback={TAB_SPINNER}><RebalanceTab /></Suspense>;
-    case "agent": return <Suspense fallback={TAB_SPINNER}><AgentTab /></Suspense>;
-    case "tokens": return <Suspense fallback={TAB_SPINNER}><TokensTab /></Suspense>;
-    case "yield": return <Suspense fallback={TAB_SPINNER}><YieldTab /></Suspense>;
-    case "dex": return <Suspense fallback={TAB_SPINNER}><DexTab /></Suspense>;
-    case "accounts": return <Suspense fallback={TAB_SPINNER}><AccountsTab /></Suspense>;
-    case "settings": return <Suspense fallback={TAB_SPINNER}><SettingsTab /></Suspense>;
-    default: return null;
+    case "dashboard":  return <Dashboard />;
+    case "rebalance":  return <Rebalance />;
+    case "agent":      return <Agent />;
+    case "tokens":     return <Tokens />;
+    case "yield":      return <Yield />;
+    case "dex":        return <Dex />;
+    case "accounts":   return <Accounts />;
+    case "settings":   return <Settings />;
+    default:           return <Dashboard />;
   }
 }
 
@@ -109,9 +101,19 @@ function AppShell() {
   );
 }
 
+// Suspense wraps AppShell so useSearchParams() can suspend without breaking the page
 export default function AppPage() {
   return (
-    <Suspense>
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center">
+          <span
+            className="h-8 w-8 animate-spin rounded-full border-2"
+            style={{ borderColor: "#5B4FE8", borderTopColor: "transparent" }}
+          />
+        </div>
+      }
+    >
       <AppShell />
     </Suspense>
   );
