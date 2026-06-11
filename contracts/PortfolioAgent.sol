@@ -21,6 +21,9 @@ pragma solidity ^0.8.24;
 ///       brick the scheduler for all future ticks.
 ///   [7] _runLLM convoHistory — passes empty StorageRef tuple ('','','') correctly
 ///       as the required 30th field.
+///   [8] _runHttpPrices executor — HTTP precompile needs capability-0 executor from
+///       TEEServiceRegistry, not the LLM executor stored in portfolios[].executor.
+///       This was the root cause of all ticks being silently dropped by the builder.
 
 interface IRitualWallet {
     function deposit(uint256 lockDuration) external payable;
@@ -28,6 +31,7 @@ interface IRitualWallet {
     function balanceOf(address account) external view returns (uint256);
     function lockUntil(address account) external view returns (uint256);
 }
+
 
 interface IScheduler {
     function schedule(
@@ -76,11 +80,15 @@ contract PortfolioAgent {
     struct Portfolio {
         bool registered;
         RiskMode riskMode;
-        uint16 ethBps;   // basis points for WETH  (sum of all three = 10_000)
-        uint16 wbtcBps;  // basis points for WBTC
-        uint16 usdcBps;  // basis points for USDC (USDT = 10_000 - sum)
-        address executor;
+        uint16 ethBps;        // basis points for WETH  (sum of all three = 10_000)
+        uint16 wbtcBps;       // basis points for WBTC
+        uint16 usdcBps;       // basis points for USDC (USDT = 10_000 - sum)
+        address executor;     // LLM executor (capability=1)
         uint256 scheduleId;
+        // FIX [8]: HTTP executor stored at registration time, not fetched on each tick.
+        //          Calling TEEServiceRegistry from within a Scheduler callback causes
+        //          the RPC to reject the nested system-contract call during simulation.
+        address httpExecutor; // HTTP executor (capability=0)
     }
 
     // ─── Storage ────────────────────────────────────────────────────────────
@@ -187,18 +195,21 @@ contract PortfolioAgent {
         uint16 ethBps_,
         uint16 wbtcBps_,
         uint16 usdcBps_,
-        address executor
+        address executor,
+        address httpExecutor_
     ) external {
         require(ethBps_ + wbtcBps_ + usdcBps_ <= 10_000, "bps overflow");
         require(executor != address(0), "executor required");
+        require(httpExecutor_ != address(0), "httpExecutor required");
 
         Portfolio storage p = portfolios[msg.sender];
-        p.registered = true;
-        p.riskMode   = risk;
-        p.ethBps     = ethBps_;
-        p.wbtcBps    = wbtcBps_;
-        p.usdcBps    = usdcBps_;
-        p.executor   = executor;
+        p.registered    = true;
+        p.riskMode      = risk;
+        p.ethBps        = ethBps_;
+        p.wbtcBps       = wbtcBps_;
+        p.usdcBps       = usdcBps_;
+        p.executor      = executor;
+        p.httpExecutor  = httpExecutor_;
 
         emit PortfolioRegistered(msg.sender, risk, ethBps_, wbtcBps_, usdcBps_);
     }
@@ -337,10 +348,17 @@ if (p.scheduleId != 0) {
     /// 11  uint8    dkmsKeyFormat
     /// 12  bool     piiEnabled
     function _runHttpPrices(uint256 tickIdx, address portfolioOwner) internal {
-        address executor = portfolios[portfolioOwner].executor;
+        // FIX [8]: Use the httpExecutor stored at registerPortfolio time (capability-0).
+        // Calling TEEServiceRegistry from within a Scheduler callback is rejected by the
+        // Ritual RPC during simulation, so we resolve the address once at registration.
+        address httpExecutor = portfolios[portfolioOwner].httpExecutor;
+        if (httpExecutor == address(0)) {
+            emit TickFailed(portfolioOwner, tickIdx, "HTTP", "httpExecutor not set");
+            return;
+        }
 
         bytes memory encoded = abi.encode(
-            executor,           //  0: executor
+            httpExecutor,       //  0: executor (HTTP capability-0, not LLM)
             new bytes[](0),     //  1: encryptedSecrets (none)
             uint256(300),       //  2: ttl (300 blocks — matches LLM minimum for consistency)
             new bytes[](0),     //  3: secretSignatures (none)

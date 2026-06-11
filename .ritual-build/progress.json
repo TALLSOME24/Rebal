@@ -1,7 +1,7 @@
 {
-  "intent": "AI portfolio rebalancer: HTTP prices + LLM reasoning, audited on-chain logs, scheduler automation",
-  "features": ["HTTP", "LLM", "Scheduler"],
-  "current_phase": 6,
+  "intent": "Rebal v2 — complete functional redesign with all tabs",
+  "features": ["HTTP", "LLM", "Scheduler", "Frontend-v2"],
+  "current_phase": 8,
   "phases": [
     { "name": "intake_projection", "status": "complete" },
     { "name": "architecture", "status": "complete" },
@@ -9,28 +9,25 @@
     { "name": "frontend", "status": "complete_rebal_redesign" },
     { "name": "deploy", "status": "mock_tokens_and_price_feed_deployed" },
     { "name": "verify", "status": "scheduler_fix_compile_tsc_build_passed" },
-    { "name": "debug_redeploy", "status": "complete_v4_deployed_0x971681AB0aeE3E4ED237305618CB95e2cEA3f4db" }
+    { "name": "debug_redeploy", "status": "complete_v4_deployed_0x971681AB0aeE3E4ED237305618CB95e2cEA3f4db" },
+    { "name": "v2_group_a_foundation", "status": "complete_build_passes" },
+    { "name": "v2_group_b_pages", "status": "complete_build_passes" },
+    { "name": "v2_group_c_core_tabs", "status": "complete_build_passes" },
+    { "name": "v2_group_d_v2_tabs", "status": "complete_build_passes" }
   ],
   "files_read": [
     ".cursor/skills/ritual-dapp-skills/skills/ritual/SKILL.md",
-    ".cursor/skills/ritual-dapp-skills/skills/ritual-meta-projection/SKILL.md",
-    ".cursor/skills/ritual-dapp-skills/agents/ritual-dapp-builder.md",
-    ".cursor/skills/ritual-dapp-skills/examples/registry.json",
-    ".cursor/skills/ritual-dapp-skills/skills/ritual-dapp-scheduler/SKILL.md",
-    ".cursor/skills/ritual-dapp-skills/skills/ritual-dapp-http/SKILL.md",
-    ".cursor/skills/ritual-dapp-skills/skills/ritual-dapp-llm/SKILL.md",
-    ".cursor/skills/ritual-dapp-skills/skills/ritual-dapp-contracts/SKILL.md",
-    ".cursor/skills/ritual-dapp-skills/skills/ritual-dapp-frontend/SKILL.md",
-    ".cursor/skills/ritual-dapp-skills/skills/ritual-dapp-design/SKILL.md",
-    ".codex/skills/ritual-dapp-skills/skills/ritual/SKILL.md",
-    ".codex/skills/ritual-dapp-skills/skills/ritual-dapp-frontend/SKILL.md",
-    ".codex/skills/ritual-dapp-skills/skills/ritual-dapp-design/SKILL.md",
-    ".codex/skills/ritual-dapp-skills/skills/ritual-dapp-http/SKILL.md",
-    ".codex/skills/ritual-dapp-skills/skills/ritual-dapp-contracts/SKILL.md",
-    ".codex/skills/ritual-dapp-skills/skills/ritual-dapp-deploy/SKILL.md",
-    ".codex/skills/ritual-dapp-skills/skills/ritual-dapp-scheduler/SKILL.md",
-    ".codex/skills/ritual-dapp-skills/skills/ritual-dapp-wallet/SKILL.md",
-    ".codex/skills/ritual-dapp-skills/skills/ritual-meta-verification/SKILL.md"
+    "contracts/PortfolioAgent.sol",
+    "lib/abi/portfolioAgent.ts",
+    "lib/constants.ts",
+    "components/Dashboard.tsx",
+    "components/ChainGuard.tsx",
+    "components/WalletConnect.tsx",
+    "app/providers.tsx",
+    "app/page.tsx",
+    "app/layout.tsx",
+    "tailwind.config.ts",
+    "app/globals.css"
   ],
   "next_file": null,
   "markers": {
@@ -38,12 +35,13 @@
     "wallet_funded": false,
     "contract_compiled": true,
     "contract_deployed": true,
-    "v4_deployed": "0x971681AB0aeE3E4ED237305618CB95e2cEA3f4db",
+    "v5_deployed": "0x51bebdc4af5f6058d826fc8621a854e896c5e3ed",
     "precompile_simulated": false,
     "precompile_settled": false,
     "frontend_renders": true,
-    "frontend_connects": false,
-    "e2e_complete": false
+    "frontend_connects": true,
+    "e2e_complete": false,
+    "v2_build_passes": true
   },
   "artifacts": {
     "mockTokens": {
@@ -52,6 +50,6 @@
       "USDC": "0x031CbE4EbC5aF2ca432Ae3df4DbD65053F1A6584",
       "USDT": "0xEa9E6a94E83E4B46eA7Dff6802D269F9a4e21E02"
     },
-    "mockPriceFeed": "0x7e2c33923f895215A07a706E1D4E99fE64386985"
+    "portfolioAgent": "0x51bebdc4af5f6058d826fc8621a854e896c5e3ed"
   }
 }

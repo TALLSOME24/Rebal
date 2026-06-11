@@ -3,23 +3,49 @@
 @tailwind utilities;
 
 :root {
-  --ritual-bg: #0d0d0d;
-  --rebal-card: #161616;
-  --rebal-border: #1e1e1e;
-  --rebal-primary: #7c3aed;
-  --rebal-primary-hover: #6d28d9;
-  --rebal-success: #10b981;
-  --rebal-danger: #ef4444;
+  --bg: #040508;
+  --surface: #0F0E1A;
+  --surface2: #141228;
+  --border: rgba(255, 255, 255, 0.06);
+  --primary: #5B4FE8;
+  --green: #00C896;
+  --gold: #D4A847;
+  --ritual-bg: #040508;
+  --rebal-card: #0F0E1A;
+  --rebal-border: rgba(255, 255, 255, 0.06);
+  --rebal-primary: #5B4FE8;
+  --rebal-primary-hover: #4A3FD7;
+  --rebal-success: #00C896;
+  --rebal-danger: #FF4757;
 }
 
 html {
-  background-color: #0d0d0d;
+  background-color: var(--bg);
 }
 
 body {
-  background-color: #0d0d0d;
+  background-color: var(--bg);
+  color: white;
+  font-family: 'Inter', sans-serif;
   background-attachment: fixed;
   min-height: 100vh;
+  position: relative;
+}
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(ellipse 140% 80% at 50% -5%, #0A1630 0%, #060A18 50%, #040508 100%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+#__next,
+main,
+.app-root {
+  position: relative;
+  z-index: 1;
 }
 
 .font-mono {
@@ -27,5 +53,29 @@ body {
 }
 
 input[type="range"] {
-  accent-color: var(--rebal-primary);
+  -webkit-appearance: none;
+  appearance: none;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+  outline: none;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--primary);
+  cursor: pointer;
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--primary);
+  cursor: pointer;
+  border: none;
 }

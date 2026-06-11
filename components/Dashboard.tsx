@@ -361,7 +361,7 @@ export function Dashboard() {
       address: agent,
       abi: portfolioAgentAbi,
       functionName: "registerPortfolio",
-      args: [riskMode, ethBps, wbtcBps, usdcBps, executor],
+      args: [riskMode, ethBps, wbtcBps, usdcBps, executor, executor],
     });
   };
 

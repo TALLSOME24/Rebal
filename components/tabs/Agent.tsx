@@ -1,0 +1,391 @@
+"use client";
+
+import { useState, useEffect } from "react";
+import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt, useBalance, usePublicClient, useWalletClient } from "wagmi";
+import { formatEther, parseEther, type Address } from "viem";
+import { portfolioAgentABI } from "@/lib/abi/portfolioAgentABI";
+import { ritualWalletABI } from "@/lib/abi/ritualWalletABI";
+import { schedulerABI } from "@/lib/abi/schedulerABI";
+import { PORTFOLIO_AGENT, RITUAL_WALLET, SCHEDULER } from "@/lib/constants";
+import { useAgentState } from "@/hooks/useAgentState";
+import { useTickEvents } from "@/hooks/useTickEvents";
+import { useToast } from "@/components/Toast";
+
+function Label({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="mb-2 font-mono text-[10px] uppercase tracking-widest" style={{ color: "rgba(255,255,255,0.25)", letterSpacing: "1.4px" }}>
+      {children}
+    </p>
+  );
+}
+
+function Card({ children, style, className = "" }: { children: React.ReactNode; style?: React.CSSProperties; className?: string }) {
+  return (
+    <div
+      className={`rounded-2xl border p-4 ${className}`}
+      style={{ backgroundColor: "rgba(255,255,255,0.025)", borderColor: "rgba(255,255,255,0.06)", ...style }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function SliderField({
+  label,
+  value,
+  min,
+  max,
+  step = 1,
+  onChange,
+  unit = "",
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step?: number;
+  onChange: (v: number) => void;
+  unit?: string;
+}) {
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center justify-between">
+        <span className="text-xs" style={{ color: "rgba(255,255,255,0.5)" }}>
+          {label}
+        </span>
+        <span className="font-mono text-xs" style={{ color: "rgba(255,255,255,0.75)" }}>
+          {value.toLocaleString()}{unit}
+        </span>
+      </div>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="w-full"
+      />
+    </div>
+  );
+}
+
+export function Agent() {
+  const { address } = useAccount();
+  const publicClient = usePublicClient();
+  const { data: walletClient } = useWalletClient();
+  const agentState = useAgentState();
+  const { events } = useTickEvents();
+  const { toast } = useToast();
+
+  // Scheduler config
+  const [freq, setFreq] = useState(80);
+  const [cycles, setCycles] = useState(12);
+  const [gasLimit, setGasLimit] = useState(3000000);
+  const [ttl, setTtl] = useState(300);
+
+  // Ritual Wallet
+  const [depositAmt, setDepositAmt] = useState("0.4");
+  const [lockBlocks, setLockBlocks] = useState(100);
+
+  // Agent fund
+  const [fundAmt, setFundAmt] = useState("0.1");
+  const [isFunding, setIsFunding] = useState(false);
+
+  const { data: contractBalance, refetch: refetchBalance } = useBalance({
+    address: PORTFOLIO_AGENT,
+    query: { refetchInterval: 12_000 },
+  });
+
+  const { data: ritualBal } = useReadContract({
+    address: RITUAL_WALLET,
+    abi: ritualWalletABI,
+    functionName: "balanceOf",
+    args: [address ?? ("0x0" as Address)],
+    query: { enabled: !!address, refetchInterval: 12_000 },
+  });
+
+  // startAutomation
+  const { writeContract: writeStart, data: startHash, isPending: startPending } = useWriteContract();
+  const { isSuccess: startSuccess } = useWaitForTransactionReceipt({ hash: startHash, query: { enabled: !!startHash } });
+  useEffect(() => { if (startSuccess) toast("Scheduler started ✓", "success"); }, [startSuccess, toast]);
+
+  // cancelAutomation
+  const { writeContract: writeCancel, data: cancelHash, isPending: cancelPending } = useWriteContract();
+  const { isSuccess: cancelSuccess } = useWaitForTransactionReceipt({ hash: cancelHash, query: { enabled: !!cancelHash } });
+  useEffect(() => { if (cancelSuccess) toast("Scheduler cancelled ✓", "success"); }, [cancelSuccess, toast]);
+
+  // depositFees
+  const { writeContract: writeDeposit, data: depositHash, isPending: depositPending } = useWriteContract();
+  const { isSuccess: depositSuccess } = useWaitForTransactionReceipt({ hash: depositHash, query: { enabled: !!depositHash } });
+  useEffect(() => { if (depositSuccess) toast("Deposited to RitualWallet ✓", "success"); }, [depositSuccess, toast]);
+
+  // approveScheduler
+  const { writeContract: writeApprove, data: approveHash, isPending: approvePending } = useWriteContract();
+  const { isSuccess: approveSuccess } = useWaitForTransactionReceipt({ hash: approveHash, query: { enabled: !!approveHash } });
+  useEffect(() => { if (approveSuccess) toast("Scheduler approved ✓", "success"); }, [approveSuccess, toast]);
+
+  const startScheduler = async () => {
+    if (!publicClient) return;
+    toast("Sending startAutomation…", "pending");
+    const gas = await publicClient.getGasPrice();
+    writeStart({
+      address: PORTFOLIO_AGENT,
+      abi: portfolioAgentABI,
+      functionName: "startAutomation",
+      args: [freq, cycles, gasLimit, gas, ttl],
+    });
+  };
+
+  const cancelScheduler = () => {
+    toast("Cancelling scheduler…", "pending");
+    writeCancel({ address: PORTFOLIO_AGENT, abi: portfolioAgentABI, functionName: "cancelAutomation" });
+  };
+
+  const depositFees = () => {
+    const amt = parseEther(depositAmt || "0");
+    if (amt <= 0n) return toast("Enter a valid deposit amount", "error");
+    toast("Depositing to RitualWallet…", "pending");
+    writeDeposit({
+      address: PORTFOLIO_AGENT,
+      abi: portfolioAgentABI,
+      functionName: "depositFeesForCaller",
+      args: [BigInt(lockBlocks)],
+      value: amt,
+    });
+  };
+
+  const approveScheduler = () => {
+    toast("Approving scheduler…", "pending");
+    writeApprove({
+      address: SCHEDULER,
+      abi: schedulerABI,
+      functionName: "approveScheduler",
+      args: [PORTFOLIO_AGENT],
+    });
+  };
+
+  const fundAgent = async () => {
+    if (!walletClient || !publicClient) return;
+    const amt = parseEther(fundAmt || "0");
+    if (amt <= 0n) return toast("Enter a valid fund amount", "error");
+    setIsFunding(true);
+    toast("Sending ETH to agent…", "pending");
+    try {
+      const txHash = await walletClient.sendTransaction({ to: PORTFOLIO_AGENT, value: amt });
+      await publicClient.waitForTransactionReceipt({ hash: txHash });
+      await refetchBalance();
+      toast("Agent funded ✓", "success");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Fund failed", "error");
+    } finally {
+      setIsFunding(false);
+    }
+  };
+
+  const tickCount = events.filter((e) => e.type === "decision").length;
+  const ritualBalEth = ritualBal ? Number(formatEther(ritualBal as bigint)) : 0;
+
+  return (
+    <div className="space-y-4">
+      {/* Hero card */}
+      <div
+        className="rounded-2xl border p-5"
+        style={{
+          background: "linear-gradient(135deg, rgba(91,79,232,0.08) 0%, rgba(59,130,246,0.04) 100%)",
+          borderColor: "rgba(91,79,232,0.25)",
+        }}
+      >
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-3">
+              <span
+                className="flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold"
+                style={
+                  agentState.registered
+                    ? { backgroundColor: "rgba(0,200,150,0.1)", borderColor: "rgba(0,200,150,0.3)", color: "#00C896" }
+                    : { backgroundColor: "rgba(255,255,255,0.05)", borderColor: "rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.4)" }
+                }
+              >
+                <span
+                  className="h-1.5 w-1.5 rounded-full"
+                  style={{
+                    backgroundColor: agentState.registered ? "#00C896" : "rgba(255,255,255,0.3)",
+                    ...(agentState.registered ? {} : {}),
+                  }}
+                />
+                {agentState.registered ? "Active" : "Paused"}
+              </span>
+              <span className="text-sm" style={{ color: "rgba(255,255,255,0.4)" }}>
+                PortfolioAgent v5 · Ritual Chain 1979
+              </span>
+            </div>
+
+            {/* Metrics */}
+            <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
+              {[
+                { label: "Ticks Fired", value: String(tickCount) },
+                { label: "Tick Index", value: String(agentState.tickIndex) },
+                { label: "Contract Balance", value: contractBalance ? `${Number(contractBalance.formatted).toFixed(4)} RITUAL` : "—" },
+                { label: "Net Profit", value: "$0.00" },
+              ].map(({ label, value }) => (
+                <div key={label}>
+                  <p className="font-mono text-[10px] uppercase" style={{ color: "rgba(255,255,255,0.3)" }}>{label}</p>
+                  <p className="mt-0.5 font-mono text-sm text-white">{value}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+          <button
+            type="button"
+            className="rounded-xl border px-4 py-2 text-sm font-semibold transition hover:opacity-90"
+            style={{
+              backgroundColor: "rgba(255,71,87,0.07)",
+              borderColor: "rgba(255,71,87,0.2)",
+              color: "rgba(255,71,87,0.75)",
+            }}
+            title="Owner-only function"
+          >
+            ⏸ Emergency Pause
+          </button>
+        </div>
+      </div>
+
+      {/* Gas vs Yield */}
+      <div
+        className="rounded-2xl border p-4"
+        style={{ backgroundColor: "rgba(255,255,255,0.025)", borderColor: "rgba(0,200,150,0.2)" }}
+      >
+        <Label>Gas vs Yield Profitability</Label>
+        <div className="space-y-2">
+          {[
+            { label: "Estimated gas (next tick)", value: "~$0.05", color: "#FF4757" },
+            { label: "Yield captured", value: "$0.00", color: "#D4A847" },
+            { label: "Net (yield - gas)", value: "-$0.05", color: "rgba(255,255,255,0.4)" },
+          ].map(({ label, value, color }) => (
+            <div key={label} className="flex items-center justify-between">
+              <span className="text-sm" style={{ color: "rgba(255,255,255,0.5)" }}>{label}</span>
+              <span className="font-mono text-sm" style={{ color }}>{value}</span>
+            </div>
+          ))}
+        </div>
+        <div className="mt-3 h-[3px] overflow-hidden rounded-full" style={{ backgroundColor: "rgba(255,255,255,0.07)" }}>
+          <div className="h-full w-0 rounded-full" style={{ backgroundColor: "#00C896" }} />
+        </div>
+        <p className="mt-1 text-xs" style={{ color: "rgba(255,71,87,0.6)" }}>
+          Below threshold — agent will skip this tick
+        </p>
+      </div>
+
+      {/* Scheduler Setup */}
+      <Card>
+        <Label>Scheduler Setup</Label>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <SliderField label="Frequency (blocks)" value={freq} min={20} max={500} onChange={setFreq} />
+          <SliderField label="Cycles" value={cycles} min={10} max={500} onChange={setCycles} />
+          <SliderField label="Gas limit" value={gasLimit} min={1000000} max={10000000} step={100000} onChange={setGasLimit} />
+          <SliderField label="TTL (blocks)" value={ttl} min={300} max={3600} onChange={setTtl} />
+        </div>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => void startScheduler()}
+            disabled={!address || startPending}
+            className="rounded-xl px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-40"
+            style={{ backgroundColor: "#5B4FE8" }}
+          >
+            {startPending ? "Starting…" : "Start"}
+          </button>
+          <button
+            type="button"
+            onClick={cancelScheduler}
+            disabled={!address || cancelPending}
+            className="rounded-xl border px-4 py-2 text-sm transition hover:bg-white/5 disabled:opacity-40"
+            style={{ borderColor: "rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.5)" }}
+          >
+            {cancelPending ? "Cancelling…" : "Cancel"}
+          </button>
+        </div>
+      </Card>
+
+      {/* Approve + RitualWallet + Fund in grid */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {/* Approve Scheduler */}
+        <Card>
+          <Label>Approve Scheduler</Label>
+          <p className="mb-3 text-xs" style={{ color: "rgba(255,255,255,0.4)" }}>
+            Allow the Scheduler to debit fees from this contract's RitualWallet.
+          </p>
+          <button
+            type="button"
+            onClick={approveScheduler}
+            disabled={!address || approvePending}
+            className="w-full rounded-xl px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-40"
+            style={{ backgroundColor: "#5B4FE8" }}
+          >
+            {approvePending ? "Approving…" : "Approve Scheduler"}
+          </button>
+        </Card>
+
+        {/* RitualWallet Deposit */}
+        <Card>
+          <Label>RitualWallet</Label>
+          <p className="mb-1 font-mono text-xs" style={{ color: "rgba(255,255,255,0.4)" }}>
+            Balance: {ritualBalEth.toFixed(4)} RITUAL
+          </p>
+          <p className="mb-3 font-mono text-[10px]" style={{ color: "rgba(255,255,255,0.25)" }}>
+            {RITUAL_WALLET.slice(0, 10)}…
+          </p>
+          <input
+            type="number"
+            value={depositAmt}
+            onChange={(e) => setDepositAmt(e.target.value)}
+            step="0.1"
+            className="mb-2 w-full rounded-xl border px-3 py-2 text-sm focus:outline-none"
+            style={{ backgroundColor: "rgba(255,255,255,0.04)", borderColor: "rgba(255,255,255,0.08)", color: "white" }}
+            placeholder="Amount (RITUAL)"
+          />
+          <SliderField label="Lock blocks" value={lockBlocks} min={0} max={1000} onChange={setLockBlocks} />
+          <button
+            type="button"
+            onClick={depositFees}
+            disabled={!address || depositPending}
+            className="mt-3 w-full rounded-xl px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-40"
+            style={{ backgroundColor: "#5B4FE8" }}
+          >
+            {depositPending ? "Depositing…" : "Deposit"}
+          </button>
+        </Card>
+
+        {/* Fund Agent */}
+        <Card>
+          <Label>Fund Agent Contract</Label>
+          <p className="mb-1 font-mono text-xs" style={{ color: "rgba(255,255,255,0.4)" }}>
+            Balance: {contractBalance ? Number(contractBalance.formatted).toFixed(4) : "—"} RITUAL
+          </p>
+          <p className="mb-3 font-mono text-[10px]" style={{ color: "rgba(255,255,255,0.25)" }}>
+            {PORTFOLIO_AGENT.slice(0, 10)}…
+          </p>
+          <input
+            type="number"
+            value={fundAmt}
+            onChange={(e) => setFundAmt(e.target.value)}
+            step="0.1"
+            className="mb-3 w-full rounded-xl border px-3 py-2 text-sm focus:outline-none"
+            style={{ backgroundColor: "rgba(255,255,255,0.04)", borderColor: "rgba(255,255,255,0.08)", color: "white" }}
+            placeholder="ETH amount"
+          />
+          <button
+            type="button"
+            onClick={() => void fundAgent()}
+            disabled={!address || isFunding}
+            className="w-full rounded-xl px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-40"
+            style={{ backgroundColor: "#5B4FE8" }}
+          >
+            {isFunding ? "Sending…" : "Fund Agent"}
+          </button>
+        </Card>
+      </div>
+    </div>
+  );
+}

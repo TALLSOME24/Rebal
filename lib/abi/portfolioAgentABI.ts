@@ -1,4 +1,7 @@
-export const portfolioAgentAbi = [
+// ABI for PortfolioAgent deployed at 0x51bebdc4af5f6058d826fc8621a854e896c5e3ed on chain 1979
+// Functions verified against contracts/PortfolioAgent.sol source.
+// Note: spec names like savePortfolio/getAllocation map to registerPortfolio/portfolios here.
+export const portfolioAgentABI = [
   {
     name: "registerPortfolio",
     type: "function",
@@ -14,11 +17,20 @@ export const portfolioAgentAbi = [
     outputs: [],
   },
   {
-    name: "depositFeesForCaller",
+    name: "portfolios",
     type: "function",
-    stateMutability: "payable",
-    inputs: [{ name: "lockDurationBlocks", type: "uint256" }],
-    outputs: [],
+    stateMutability: "view",
+    inputs: [{ name: "", type: "address" }],
+    outputs: [
+      { name: "registered", type: "bool" },
+      { name: "riskMode", type: "uint8" },
+      { name: "ethBps", type: "uint16" },
+      { name: "wbtcBps", type: "uint16" },
+      { name: "usdcBps", type: "uint16" },
+      { name: "executor", type: "address" },
+      { name: "scheduleId", type: "uint256" },
+      { name: "httpExecutor", type: "address" },
+    ],
   },
   {
     name: "startAutomation",
@@ -41,11 +53,11 @@ export const portfolioAgentAbi = [
     outputs: [],
   },
   {
-    name: "lastPricesBody",
+    name: "depositFeesForCaller",
     type: "function",
-    stateMutability: "view",
-    inputs: [{ name: "owner", type: "address" }],
-    outputs: [{ type: "bytes" }],
+    stateMutability: "payable",
+    inputs: [{ name: "lockDurationBlocks", type: "uint256" }],
+    outputs: [],
   },
   {
     name: "ritualBalance",
@@ -62,20 +74,11 @@ export const portfolioAgentAbi = [
     outputs: [{ type: "uint256" }],
   },
   {
-    name: "portfolios",
+    name: "lastPricesBody",
     type: "function",
     stateMutability: "view",
-    inputs: [{ name: "", type: "address" }],
-    outputs: [
-      { name: "registered", type: "bool" },
-      { name: "riskMode", type: "uint8" },
-      { name: "ethBps", type: "uint16" },
-      { name: "wbtcBps", type: "uint16" },
-      { name: "usdcBps", type: "uint16" },
-      { name: "executor", type: "address" },
-      { name: "scheduleId", type: "uint256" },
-      { name: "httpExecutor", type: "address" },
-    ],
+    inputs: [{ name: "owner", type: "address" }],
+    outputs: [{ type: "bytes" }],
   },
   {
     name: "lastCycleId",
@@ -92,13 +95,46 @@ export const portfolioAgentAbi = [
     outputs: [{ type: "uint256" }],
   },
   {
+    name: "onScheduledTick",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "executionIndex", type: "uint256" },
+      { name: "portfolioOwner", type: "address" },
+    ],
+    outputs: [],
+  },
+  {
+    name: "COINGECKO_URL",
+    type: "function",
+    stateMutability: "pure",
+    inputs: [],
+    outputs: [{ type: "string" }],
+  },
+  {
+    name: "MODEL",
+    type: "function",
+    stateMutability: "pure",
+    inputs: [],
+    outputs: [{ type: "string" }],
+  },
+  {
     type: "event",
-    name: "TickFailed",
+    name: "PortfolioRegistered",
     inputs: [
       { name: "owner", type: "address", indexed: true },
-      { name: "tickIdx", type: "uint256", indexed: true },
-      { name: "phase", type: "string", indexed: false },
-      { name: "reason", type: "string", indexed: false },
+      { name: "risk", type: "uint8", indexed: false },
+      { name: "ethBps", type: "uint16", indexed: false },
+      { name: "wbtcBps", type: "uint16", indexed: false },
+      { name: "usdcBps", type: "uint16", indexed: false },
+    ],
+  },
+  {
+    type: "event",
+    name: "FeesDepositFor",
+    inputs: [
+      { name: "user", type: "address", indexed: true },
+      { name: "amountWei", type: "uint256", indexed: false },
     ],
   },
   {
@@ -120,18 +156,15 @@ export const portfolioAgentAbi = [
     ],
   },
   {
-    name: "COINGECKO_URL",
-    type: "function",
-    stateMutability: "pure",
-    inputs: [],
-    outputs: [{ type: "string" }],
-  },
-  {
-    name: "MODEL",
-    type: "function",
-    stateMutability: "pure",
-    inputs: [],
-    outputs: [{ type: "string" }],
+    type: "event",
+    name: "PricesSnapshot",
+    inputs: [
+      { name: "owner", type: "address", indexed: true },
+      { name: "tickIdx", type: "uint256", indexed: true },
+      { name: "cycleId", type: "uint256", indexed: true },
+      { name: "statusCode", type: "uint16", indexed: false },
+      { name: "body", type: "bytes", indexed: false },
+    ],
   },
   {
     type: "event",
@@ -139,7 +172,7 @@ export const portfolioAgentAbi = [
     inputs: [
       { name: "owner", type: "address", indexed: true },
       { name: "cycleId", type: "uint256", indexed: true },
-      { name: "executionIndex", type: "uint256", indexed: true },
+      { name: "tickIdx", type: "uint256", indexed: true },
       { name: "llmHasError", type: "bool", indexed: false },
       { name: "completionPayload", type: "bytes", indexed: false },
       { name: "errorMessage", type: "string", indexed: false },
@@ -149,13 +182,12 @@ export const portfolioAgentAbi = [
   },
   {
     type: "event",
-    name: "PricesSnapshot",
+    name: "TickFailed",
     inputs: [
       { name: "owner", type: "address", indexed: true },
-      { name: "executionIndex", type: "uint256", indexed: true },
-      { name: "cycleId", type: "uint256", indexed: true },
-      { name: "statusCode", type: "uint16", indexed: false },
-      { name: "body", type: "bytes", indexed: false },
+      { name: "tickIdx", type: "uint256", indexed: true },
+      { name: "phase", type: "string", indexed: false },
+      { name: "reason", type: "string", indexed: false },
     ],
   },
 ] as const;
