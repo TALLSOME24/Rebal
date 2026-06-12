@@ -7,7 +7,7 @@ const { createPublicClient, http, formatEther } = require("viem");
 const { privateKeyToAccount } = require("viem/accounts");
 
 const RITUAL_RPC = process.env.RITUAL_RPC_URL || "https://rpc.ritualfoundation.org";
-const AGENT    = "0xB2f331A2403d35C79BcAc72885a55676B17B8348"; // v7
+const AGENT    = "0xee71797530a584E9391F8E97E9BA6E91DBAe3c5e"; // v8
 const WALLET   = "0x532F0dF0896F353d8C3DD8cc134e8129DA2a3948";
 const SCHED    = "0x56e776BAE2DD60664b69Bd5F865F1180ffB7D58B";
 const TEE_REG  = "0x9644e8562cE0Fe12b4deeC4163c064A8862Bf47F";

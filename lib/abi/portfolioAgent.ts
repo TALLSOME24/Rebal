@@ -41,6 +41,13 @@ export const portfolioAgentAbi = [
     outputs: [],
   },
   {
+    name: "withdrawFees",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "amount", type: "uint256" }],
+    outputs: [],
+  },
+  {
     name: "lastPricesBody",
     type: "function",
     stateMutability: "view",

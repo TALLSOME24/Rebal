@@ -25,10 +25,14 @@ pragma solidity ^0.8.24;
 ///   [8] _runHttpPrices executor — HTTP precompile needs capability-0 executor from
 ///       TEEServiceRegistry, not the LLM executor stored in portfolios[].executor.
 ///       This was the root cause of all ticks being silently dropped by the builder.
+///   [9] withdrawFees(uint256) — ADDED in v8: allows owner to withdraw this contract's
+///       RitualWallet balance after the lock expires. Prevents RITUAL from being
+///       permanently stuck when migrating to a new contract version.
 
 interface IRitualWallet {
     function deposit(uint256 lockDuration) external payable;
     function depositFor(address user, uint256 lockDuration) external payable;
+    function withdraw(uint256 amount) external;
     function balanceOf(address account) external view returns (uint256);
     function lockUntil(address account) external view returns (uint256);
 }
@@ -69,6 +73,7 @@ contract PortfolioAgent {
     address public constant SCHEDULER_CONST = 0x56e776BAE2DD60664b69Bd5F865F1180ffB7D58B;
 
     IScheduler public immutable scheduler;
+    address    public immutable owner;
 
     // ─── Minimum TTL enforced onchain ───────────────────────────────────────
     // GLM-4.7-FP8 is a reasoning model; inference takes 10-40s wall-clock.
@@ -160,6 +165,7 @@ contract PortfolioAgent {
     constructor(address _scheduler) {
         require(_scheduler == SCHEDULER_CONST, "scheduler addr mismatch");
         scheduler = IScheduler(_scheduler);
+        owner = msg.sender;
     }
 
     receive() external payable {}
@@ -185,6 +191,20 @@ contract PortfolioAgent {
         require(msg.value > 0, "value required");
         IRitualWallet(RITUAL_WALLET).deposit{value: msg.value}(lockDurationBlocks);
         emit FeesDepositFor(msg.sender, msg.value);
+    }
+
+    /// @notice Withdraw RITUAL from this contract's RitualWallet balance back to the owner.
+    ///         Only callable by the deployer (owner). Lock must have expired first.
+    ///         Pass 0 to withdraw the full balance.
+    function withdrawFees(uint256 amount) external {
+        require(msg.sender == owner, "only owner");
+        uint256 bal = IRitualWallet(RITUAL_WALLET).balanceOf(address(this));
+        require(bal > 0, "nothing to withdraw");
+        uint256 amt = amount == 0 ? bal : amount;
+        IRitualWallet(RITUAL_WALLET).withdraw(amt);
+        // Forward the received RITUAL to the owner
+        (bool ok,) = owner.call{value: amt}("");
+        require(ok, "transfer failed");
     }
 
     // ─── Public: Portfolio management ────────────────────────────────────────
