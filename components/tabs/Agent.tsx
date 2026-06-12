@@ -4,8 +4,7 @@ import { useState, useEffect } from "react";
 import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt, useBalance, usePublicClient, useWalletClient } from "wagmi";
 import { formatEther, parseEther, type Address } from "viem";
 import { portfolioAgentABI } from "@/lib/abi/portfolioAgentABI";
-import { schedulerABI } from "@/lib/abi/schedulerABI";
-import { PORTFOLIO_AGENT, RITUAL_WALLET, SCHEDULER } from "@/lib/constants";
+import { PORTFOLIO_AGENT, RITUAL_WALLET } from "@/lib/constants";
 import { useAgentState } from "@/hooks/useAgentState";
 import { useTickEvents } from "@/hooks/useTickEvents";
 import { useToast } from "@/components/Toast";
@@ -118,11 +117,6 @@ export function Agent() {
   const { isSuccess: depositSuccess } = useWaitForTransactionReceipt({ hash: depositHash, query: { enabled: !!depositHash } });
   useEffect(() => { if (depositSuccess) toast("Deposited to RitualWallet ✓", "success"); }, [depositSuccess, toast]);
 
-  // approveScheduler
-  const { writeContract: writeApprove, data: approveHash, isPending: approvePending } = useWriteContract();
-  const { isSuccess: approveSuccess } = useWaitForTransactionReceipt({ hash: approveHash, query: { enabled: !!approveHash } });
-  useEffect(() => { if (approveSuccess) toast("Scheduler approved ✓", "success"); }, [approveSuccess, toast]);
-
   const startScheduler = async () => {
     if (!publicClient) return;
     toast("Sending startAutomation…", "pending");
@@ -150,16 +144,6 @@ export function Agent() {
       functionName: "depositFeesForCaller",
       args: [BigInt(lockBlocks)],
       value: amt,
-    });
-  };
-
-  const approveScheduler = () => {
-    toast("Approving scheduler…", "pending");
-    writeApprove({
-      address: SCHEDULER,
-      abi: schedulerABI,
-      functionName: "approveScheduler",
-      args: [PORTFOLIO_AGENT],
     });
   };
 
@@ -308,21 +292,48 @@ export function Agent() {
 
       {/* Approve + RitualWallet + Fund in grid */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {/* Approve Scheduler */}
+        {/* Pre-flight Checklist */}
         <Card>
-          <Label>Approve Scheduler</Label>
+          <Label>Pre-flight Checklist</Label>
           <p className="mb-3 text-xs" style={{ color: "rgba(255,255,255,0.4)" }}>
-            Allow the Scheduler to debit fees from this contract's RitualWallet.
+            Requirements before starting automation.
           </p>
-          <button
-            type="button"
-            onClick={approveScheduler}
-            disabled={!address || approvePending}
-            className="w-full rounded-xl px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-40"
-            style={{ backgroundColor: "#5B4FE8" }}
-          >
-            {approvePending ? "Approving…" : "Approve Scheduler"}
-          </button>
+          <ul className="space-y-2">
+            {[
+              {
+                label: "Wallet connected",
+                ok: !!address,
+              },
+              {
+                label: "Portfolio registered",
+                ok: agentState.registered,
+              },
+              {
+                label: `RITUAL balance > 0 (${ritualBalEth.toFixed(4)})`,
+                ok: ritualBalEth > 0,
+              },
+              {
+                label: "Gas limit ≥ 3,000,000",
+                ok: gasLimit >= 3_000_000,
+              },
+              {
+                label: "TTL ≥ 300 blocks",
+                ok: ttl >= 300,
+              },
+            ].map(({ label, ok }) => (
+              <li key={label} className="flex items-center gap-2">
+                <span className="shrink-0 font-mono text-xs" style={{ color: ok ? "#00C896" : "#FF4757" }}>
+                  {ok ? "✓" : "✗"}
+                </span>
+                <span className="text-xs" style={{ color: ok ? "rgba(255,255,255,0.55)" : "rgba(255,71,87,0.8)" }}>
+                  {label}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-3 font-mono text-[10px]" style={{ color: "rgba(255,255,255,0.2)" }}>
+            No separate approval tx needed — startAutomation handles everything.
+          </p>
         </Card>
 
         {/* RitualWallet Deposit */}
