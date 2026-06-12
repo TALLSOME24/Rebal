@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt, useBalance, usePublicClient, useWalletClient } from "wagmi";
+import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt, useBalance, useBlockNumber, usePublicClient, useWalletClient } from "wagmi";
 import { formatEther, parseEther, parseGwei, type Address } from "viem";
 import { portfolioAgentABI } from "@/lib/abi/portfolioAgentABI";
+import { ritualWalletABI } from "@/lib/abi/ritualWalletABI";
 import { PORTFOLIO_AGENT, RITUAL_WALLET } from "@/lib/constants";
 import { useAgentState } from "@/hooks/useAgentState";
 import { useTickEvents } from "@/hooks/useTickEvents";
@@ -102,6 +103,16 @@ export function Agent() {
     query: { refetchInterval: 12_000 },
   });
 
+  const { data: currentBlock } = useBlockNumber({ query: { refetchInterval: 12_000 } });
+
+  const { data: lockUntilData, refetch: refetchLock } = useReadContract({
+    address: RITUAL_WALLET,
+    abi: ritualWalletABI,
+    functionName: "lockUntil",
+    args: [PORTFOLIO_AGENT],
+    query: { refetchInterval: 12_000 },
+  });
+
   // startAutomation
   const { writeContract: writeStart, data: startHash, isPending: startPending } = useWriteContract();
   const { isSuccess: startSuccess } = useWaitForTransactionReceipt({ hash: startHash, query: { enabled: !!startHash } });
@@ -115,7 +126,12 @@ export function Agent() {
   // depositFees
   const { writeContract: writeDeposit, data: depositHash, isPending: depositPending } = useWriteContract();
   const { isSuccess: depositSuccess } = useWaitForTransactionReceipt({ hash: depositHash, query: { enabled: !!depositHash } });
-  useEffect(() => { if (depositSuccess) toast("Deposited to RitualWallet ✓", "success"); }, [depositSuccess, toast]);
+  useEffect(() => {
+    if (depositSuccess) {
+      toast("Deposited to RitualWallet ✓", "success");
+      void refetchLock();
+    }
+  }, [depositSuccess, toast, refetchLock]);
 
   const startScheduler = () => {
     toast("Sending startAutomation…", "pending");
@@ -165,6 +181,8 @@ export function Agent() {
 
   const tickCount = events.filter((e) => e.type === "decision").length;
   const ritualBalEth = ritualBal ? Number(formatEther(ritualBal as bigint)) : 0;
+  const lockUntilBlock = lockUntilData ? (lockUntilData as bigint) : 0n;
+  const lockValid = currentBlock ? lockUntilBlock > currentBlock : false;
 
   return (
     <div className="space-y-4">
@@ -270,9 +288,10 @@ export function Agent() {
           <button
             type="button"
             onClick={startScheduler}
-            disabled={!address || startPending}
+            disabled={!address || startPending || !lockValid}
             className="rounded-xl px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-40"
             style={{ backgroundColor: "#5B4FE8" }}
+            title={!lockValid ? "RitualWallet lock expired — deposit first" : undefined}
           >
             {startPending ? "Starting…" : "Start"}
           </button>
@@ -298,25 +317,16 @@ export function Agent() {
           </p>
           <ul className="space-y-2">
             {[
+              { label: "Wallet connected", ok: !!address },
+              { label: "Portfolio registered", ok: agentState.registered },
+              { label: `RITUAL balance > 0 (${ritualBalEth.toFixed(4)})`, ok: ritualBalEth > 0 },
+              { label: "Gas limit ≥ 3,000,000", ok: gasLimit >= 3_000_000 },
+              { label: "TTL ≥ 300 blocks", ok: ttl >= 300 },
               {
-                label: "Wallet connected",
-                ok: !!address,
-              },
-              {
-                label: "Portfolio registered",
-                ok: agentState.registered,
-              },
-              {
-                label: `RITUAL balance > 0 (${ritualBalEth.toFixed(4)})`,
-                ok: ritualBalEth > 0,
-              },
-              {
-                label: "Gas limit ≥ 3,000,000",
-                ok: gasLimit >= 3_000_000,
-              },
-              {
-                label: "TTL ≥ 300 blocks",
-                ok: ttl >= 300,
+                label: lockValid
+                  ? `RitualWallet lock valid (until block ${lockUntilBlock.toString()})`
+                  : "RitualWallet lock valid",
+                ok: lockValid,
               },
             ].map(({ label, ok }) => (
               <li key={label} className="flex items-center gap-2">
@@ -329,6 +339,11 @@ export function Agent() {
               </li>
             ))}
           </ul>
+          {!lockValid && (
+            <p className="mt-3 text-xs" style={{ color: "rgba(255,71,87,0.75)" }}>
+              Lock expired — click Deposit in the RitualWallet card below to re-extend before starting.
+            </p>
+          )}
           <p className="mt-3 font-mono text-[10px]" style={{ color: "rgba(255,255,255,0.2)" }}>
             No separate approval tx needed — startAutomation handles everything.
           </p>
@@ -375,6 +390,9 @@ export function Agent() {
           >
             {depositPending ? "Depositing…" : "Deposit"}
           </button>
+          <p className="mt-2 font-mono text-[10px]" style={{ color: "rgba(255,255,255,0.25)" }}>
+            Depositing extends the scheduler lock. Always deposit before starting a new schedule.
+          </p>
         </Card>
 
         {/* Fund Agent */}
