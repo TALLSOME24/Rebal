@@ -4,7 +4,6 @@ import { useState, useEffect } from "react";
 import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt, useBalance, usePublicClient, useWalletClient } from "wagmi";
 import { formatEther, parseEther, type Address } from "viem";
 import { portfolioAgentABI } from "@/lib/abi/portfolioAgentABI";
-import { ritualWalletABI } from "@/lib/abi/ritualWalletABI";
 import { schedulerABI } from "@/lib/abi/schedulerABI";
 import { PORTFOLIO_AGENT, RITUAL_WALLET, SCHEDULER } from "@/lib/constants";
 import { useAgentState } from "@/hooks/useAgentState";
@@ -98,11 +97,10 @@ export function Agent() {
   });
 
   const { data: ritualBal } = useReadContract({
-    address: RITUAL_WALLET,
-    abi: ritualWalletABI,
-    functionName: "balanceOf",
-    args: [address ?? ("0x0" as Address)],
-    query: { enabled: !!address, refetchInterval: 12_000 },
+    address: PORTFOLIO_AGENT,
+    abi: portfolioAgentABI,
+    functionName: "contractRitualBalance",
+    query: { refetchInterval: 12_000 },
   });
 
   // startAutomation
@@ -283,7 +281,7 @@ export function Agent() {
         <div className="grid gap-4 sm:grid-cols-2">
           <SliderField label="Frequency (blocks)" value={freq} min={20} max={500} onChange={setFreq} />
           <SliderField label="Cycles" value={cycles} min={10} max={500} onChange={setCycles} />
-          <SliderField label="Gas limit" value={gasLimit} min={1000000} max={10000000} step={100000} onChange={setGasLimit} />
+          <SliderField label="Gas limit" value={gasLimit} min={3000000} max={10000000} step={100000} onChange={setGasLimit} />
           <SliderField label="TTL (blocks)" value={ttl} min={300} max={3600} onChange={setTtl} />
         </div>
         <div className="mt-4 flex flex-wrap gap-2">

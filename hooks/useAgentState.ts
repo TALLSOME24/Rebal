@@ -15,7 +15,7 @@ export type AgentState = {
   httpExecutor: Address | undefined;
   scheduleId: bigint;
   tickIndex: bigint;
-  cyclesLeft: bigint;
+  lastCycleId: bigint;
   loading: boolean;
 };
 
@@ -29,7 +29,7 @@ const DEFAULT: AgentState = {
   httpExecutor: undefined,
   scheduleId: 0n,
   tickIndex: 0n,
-  cyclesLeft: 0n,
+  lastCycleId: 0n,
   loading: false,
 };
 
@@ -75,7 +75,7 @@ export function useAgentState(): AgentState {
     scheduleId: p[6],
     httpExecutor: p[7],
     tickIndex: (tick as bigint | undefined) ?? 0n,
-    cyclesLeft: (lastCycle as bigint | undefined) ?? 0n,
+    lastCycleId: (lastCycle as bigint | undefined) ?? 0n,
     loading: isLoading,
   };
 }

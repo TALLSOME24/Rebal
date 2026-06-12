@@ -306,7 +306,7 @@ export function Dashboard() {
                 { k: "riskMode", v: ["Conservative", "Balanced", "Aggressive"][agentState.riskMode] ?? String(agentState.riskMode) },
                 { k: "scheduleId", v: String(agentState.scheduleId).slice(0, 12) + "…" },
                 { k: "tickIndex", v: String(agentState.tickIndex) },
-                { k: "cyclesLeft", v: String(agentState.cyclesLeft) },
+                { k: "lastCycleId", v: String(agentState.lastCycleId) },
                 { k: "executor", v: agentState.executor ? `${agentState.executor.slice(0, 8)}…` : "—" },
               ].map(({ k, v }) => (
                 <div key={k} className="flex items-center justify-between gap-2">
