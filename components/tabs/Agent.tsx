@@ -133,6 +133,19 @@ export function Agent() {
     }
   }, [depositSuccess, toast, refetchLock]);
 
+  // withdrawFees
+  const { writeContract: writeWithdraw, data: withdrawHash, isPending: withdrawPending } = useWriteContract();
+  const { isSuccess: withdrawSuccess, isError: withdrawError } = useWaitForTransactionReceipt({ hash: withdrawHash, query: { enabled: !!withdrawHash } });
+  useEffect(() => { if (withdrawSuccess) toast("RITUAL recovered ✓", "success"); }, [withdrawSuccess, toast]);
+  useEffect(() => { if (withdrawError) toast("Recovery failed", "error"); }, [withdrawError, toast]);
+
+  // owner
+  const { data: ownerAddress } = useReadContract({
+    address: PORTFOLIO_AGENT,
+    abi: portfolioAgentABI,
+    functionName: "owner",
+  });
+
   const startScheduler = () => {
     toast("Sending startAutomation…", "pending");
     writeStart({
@@ -183,6 +196,18 @@ export function Agent() {
   const ritualBalEth = ritualBal ? Number(formatEther(ritualBal as bigint)) : 0;
   const lockUntilBlock = lockUntilData ? (lockUntilData as bigint) : 0n;
   const lockValid = currentBlock ? lockUntilBlock > currentBlock : false;
+  const isOwner = !!(address && ownerAddress && address.toLowerCase() === (ownerAddress as string).toLowerCase());
+  const canRecover = isOwner && !lockValid && ritualBalEth > 0;
+
+  const recoverFees = () => {
+    toast("Recovering RITUAL…", "pending");
+    writeWithdraw({
+      address: PORTFOLIO_AGENT,
+      abi: portfolioAgentABI,
+      functionName: "withdrawFees",
+      args: [0n],
+    });
+  };
 
   return (
     <div className="space-y-4">
@@ -215,7 +240,7 @@ export function Agent() {
                 {agentState.registered ? "Active" : "Paused"}
               </span>
               <span className="text-sm" style={{ color: "rgba(255,255,255,0.4)" }}>
-                PortfolioAgent v5 · Ritual Chain 1979
+                PortfolioAgent v8 · Ritual Chain 1979
               </span>
             </div>
 
@@ -390,6 +415,17 @@ export function Agent() {
           >
             {depositPending ? "Depositing…" : "Deposit"}
           </button>
+          {canRecover && (
+            <button
+              type="button"
+              onClick={recoverFees}
+              disabled={withdrawPending}
+              className="mt-2 w-full rounded-xl border px-4 py-2 text-sm font-semibold transition hover:opacity-90 disabled:opacity-40"
+              style={{ borderColor: "rgba(0,200,150,0.4)", color: "#00C896", backgroundColor: "rgba(0,200,150,0.06)" }}
+            >
+              {withdrawPending ? "Recovering…" : "Recover RITUAL"}
+            </button>
+          )}
           <p className="mt-2 font-mono text-[10px]" style={{ color: "rgba(255,255,255,0.25)" }}>
             Depositing extends the scheduler lock. Always deposit before starting a new schedule.
           </p>

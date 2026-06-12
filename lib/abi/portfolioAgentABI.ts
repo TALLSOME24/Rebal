@@ -1,6 +1,5 @@
-// ABI for PortfolioAgent deployed at 0x51bebdc4af5f6058d826fc8621a854e896c5e3ed on chain 1979
+// ABI for PortfolioAgent v8 deployed at 0xee71797530a584E9391F8E97E9BA6E91DBAe3c5e on chain 1979
 // Functions verified against contracts/PortfolioAgent.sol source.
-// Note: spec names like savePortfolio/getAllocation map to registerPortfolio/portfolios here.
 export const portfolioAgentABI = [
   {
     name: "registerPortfolio",
@@ -51,6 +50,20 @@ export const portfolioAgentABI = [
     stateMutability: "nonpayable",
     inputs: [],
     outputs: [],
+  },
+  {
+    name: "withdrawFees",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "amount", type: "uint256" }],
+    outputs: [],
+  },
+  {
+    name: "owner",
+    type: "function",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "address" }],
   },
   {
     name: "depositFeesForCaller",
