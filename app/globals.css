@@ -2,6 +2,10 @@
 @tailwind components;
 @tailwind utilities;
 
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
 :root {
   --bg: #040508;
   --surface: #0F0E1A;
@@ -38,7 +42,7 @@ body::before {
   inset: 0;
   background: radial-gradient(ellipse 140% 80% at 50% -5%, #0A1630 0%, #060A18 50%, #040508 100%);
   pointer-events: none;
-  z-index: 0;
+  z-index: -1;
 }
 
 #__next,

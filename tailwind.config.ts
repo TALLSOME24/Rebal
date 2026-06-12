@@ -57,5 +57,10 @@ export default {
       },
     },
   },
+  safelist: [
+    { pattern: /bg-(surface|surface2|primary|green|gold)/ },
+    { pattern: /text-(primary|green|gold)/ },
+    { pattern: /border-(primary|green|gold)/ },
+  ],
   plugins: [],
 } satisfies Config;
