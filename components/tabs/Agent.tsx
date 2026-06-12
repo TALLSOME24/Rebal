@@ -261,13 +261,14 @@ export function Agent({ agentAddress }: { agentAddress: Address }) {
           </div>
           <button
             type="button"
-            className="rounded-xl border px-4 py-2 text-sm font-semibold transition hover:opacity-90"
+            disabled
+            className="rounded-xl border px-4 py-2 text-sm font-semibold cursor-not-allowed"
             style={{
-              backgroundColor: "rgba(255,71,87,0.07)",
-              borderColor: "rgba(255,71,87,0.2)",
-              color: "rgba(255,71,87,0.75)",
+              backgroundColor: "rgba(255,71,87,0.04)",
+              borderColor: "rgba(255,71,87,0.12)",
+              color: "rgba(255,71,87,0.35)",
             }}
-            title="Owner-only function"
+            title="Not available in v8 — cancel automation from the Scheduler Setup card"
           >
             ⏸ Emergency Pause
           </button>
@@ -277,14 +278,22 @@ export function Agent({ agentAddress }: { agentAddress: Address }) {
       {/* Gas vs Yield */}
       <div
         className="rounded-2xl border p-4"
-        style={{ backgroundColor: "rgba(255,255,255,0.025)", borderColor: "rgba(0,200,150,0.2)" }}
+        style={{ backgroundColor: "rgba(255,255,255,0.025)", borderColor: "rgba(255,255,255,0.06)" }}
       >
-        <Label>Gas vs Yield Profitability</Label>
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <Label>Gas vs Yield</Label>
+          <span
+            className="rounded-full border px-2 py-0.5 font-mono text-[9px]"
+            style={{ borderColor: "rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.25)" }}
+          >
+            testnet estimate
+          </span>
+        </div>
         <div className="space-y-2">
           {[
             { label: "Estimated gas (next tick)", value: "~$0.05", color: "#FF4757" },
-            { label: "Yield captured", value: "$0.00", color: "#D4A847" },
-            { label: "Net (yield - gas)", value: "-$0.05", color: "rgba(255,255,255,0.4)" },
+            { label: "Yield captured", value: "$0.00", color: "rgba(255,255,255,0.4)" },
+            { label: "Net (yield − gas)", value: "−$0.05", color: "rgba(255,255,255,0.3)" },
           ].map(({ label, value, color }) => (
             <div key={label} className="flex items-center justify-between">
               <span className="text-sm" style={{ color: "rgba(255,255,255,0.5)" }}>{label}</span>
@@ -292,11 +301,8 @@ export function Agent({ agentAddress }: { agentAddress: Address }) {
             </div>
           ))}
         </div>
-        <div className="mt-3 h-[3px] overflow-hidden rounded-full" style={{ backgroundColor: "rgba(255,255,255,0.07)" }}>
-          <div className="h-full w-0 rounded-full" style={{ backgroundColor: "#00C896" }} />
-        </div>
-        <p className="mt-1 text-xs" style={{ color: "rgba(255,71,87,0.6)" }}>
-          Below threshold — agent will skip this tick
+        <p className="mt-3 text-xs" style={{ color: "rgba(255,255,255,0.2)" }}>
+          DEX integration not active on testnet — yield capture is $0.00 until live swaps are enabled.
         </p>
       </div>
 

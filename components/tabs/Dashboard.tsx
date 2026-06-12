@@ -1,6 +1,6 @@
 "use client";
 
-import { useAccount, useReadContract } from "wagmi";
+import { useReadContract } from "wagmi";
 import { formatEther, type Address } from "viem";
 import { portfolioAgentABI } from "@/lib/abi/portfolioAgentABI";
 import { WETH, WBTC, USDC, USDT } from "@/lib/constants";
@@ -212,9 +212,11 @@ export function Dashboard({ agentAddress }: { agentAddress: Address }) {
               </button>
             </div>
             {events.length === 0 ? (
-              <div className="rounded-xl border py-8 text-center" style={{ borderColor: "rgba(255,255,255,0.05)", color: "rgba(255,255,255,0.3)" }}>
-                <p className="text-sm">No decisions yet</p>
-                <p className="mt-1 font-mono text-[10px]">Waiting for agent ticks to settle on-chain</p>
+              <div className="rounded-xl border py-8 text-center" style={{ borderColor: "rgba(255,255,255,0.05)" }}>
+                <p className="text-sm" style={{ color: "rgba(255,255,255,0.35)" }}>No decisions yet</p>
+                <p className="mt-1 text-xs" style={{ color: "rgba(255,255,255,0.2)" }}>
+                  Start the scheduler in the Agent tab to begin.
+                </p>
               </div>
             ) : (
               <div className="space-y-2">
@@ -252,10 +254,10 @@ export function Dashboard({ agentAddress }: { agentAddress: Address }) {
             <div className="mt-2 space-y-1.5">
               {[
                 { k: "registered", v: String(agentState.registered) },
-                { k: "riskMode", v: ["Conservative", "Balanced", "Aggressive"][agentState.riskMode] ?? String(agentState.riskMode) },
-                { k: "scheduleId", v: String(agentState.scheduleId).slice(0, 12) + "…" },
+                { k: "riskMode", v: ["Safe", "Balanced", "Degen"][agentState.riskMode] ?? String(agentState.riskMode) },
+                { k: "scheduleId", v: agentState.scheduleId > 0n ? `${String(agentState.scheduleId).slice(0, 12)}…` : "—" },
                 { k: "tickIndex", v: String(agentState.tickIndex) },
-                { k: "lastCycleId", v: String(agentState.lastCycleId) },
+                { k: "lastCycleId", v: agentState.lastCycleId > 0n ? String(agentState.lastCycleId) : "—" },
                 { k: "executor", v: agentState.executor ? `${agentState.executor.slice(0, 8)}…` : "—" },
               ].map(({ k, v }) => (
                 <div key={k} className="flex items-center justify-between gap-2">
@@ -273,7 +275,7 @@ export function Dashboard({ agentAddress }: { agentAddress: Address }) {
               {[
                 { label: "Edit Allocation", tab: "rebalance" },
                 { label: "Manage Agent", tab: "agent" },
-                { label: "View Yield", tab: "yield" },
+                { label: "DEX Activity", tab: "dex" },
                 { label: "Claim Tokens", tab: "tokens" },
               ].map(({ label, tab }) => (
                 <button
