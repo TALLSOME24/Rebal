@@ -1,6 +1,5 @@
 "use client";
 
-import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 type AavePool = {
@@ -23,7 +22,7 @@ async function fetchAavePools(): Promise<AavePool[]> {
         (p.symbol.includes("USDC") || p.symbol.includes("USDT"))
     )
     .sort((a, b) => b.apy - a.apy)
-    .slice(0, 3);
+    .slice(0, 5);
 }
 
 function Card({ children, style, className = "" }: { children: React.ReactNode; style?: React.CSSProperties; className?: string }) {
@@ -45,35 +44,13 @@ function Label({ children }: { children: React.ReactNode }) {
   );
 }
 
-function ComingSoonOverlay() {
-  return (
-    <div
-      className="absolute inset-0 flex items-center justify-center rounded-2xl"
-      style={{ backgroundColor: "rgba(4,5,8,0.75)", backdropFilter: "blur(4px)" }}
-    >
-      <div className="text-center">
-        <p
-          className="rounded-full border px-4 py-1.5 font-mono text-xs"
-          style={{ borderColor: "rgba(91,79,232,0.3)", color: "#5B4FE8", backgroundColor: "rgba(91,79,232,0.1)" }}
-        >
-          Coming in next release
-        </p>
-      </div>
-    </div>
-  );
-}
-
 export function Yield() {
-  const [minApy, setMinApy] = useState("3");
-  const [rotateBelow, setRotateBelow] = useState("1");
-  const [maxSupply, setMaxSupply] = useState("80");
-
-  const { data: pools, isLoading } = useQuery({
+  const { data: pools, isLoading, isError, refetch } = useQuery({
     queryKey: ["defi-llama-aave"],
     queryFn: fetchAavePools,
     refetchInterval: 5 * 60_000,
     staleTime: 4 * 60_000,
-    retry: 1,
+    retry: 2,
   });
 
   return (
@@ -84,10 +61,10 @@ export function Yield() {
         style={{ backgroundColor: "rgba(255,255,255,0.05)", gap: "1px" }}
       >
         {[
-          { label: "Total Supplied", value: "$0.00", sub: "Coming soon" },
-          { label: "Earned Today", value: "$0.00", sub: "Coming soon" },
-          { label: "Total Earned", value: "$0.00", sub: "Coming soon" },
-          { label: "Best APY", value: pools?.[0] ? `${pools[0].apy.toFixed(2)}%` : "…", sub: pools?.[0]?.symbol ?? "Aave V3" },
+          { label: "Total Supplied", value: "$0.00", sub: "Aave not on Ritual yet" },
+          { label: "Earned Today", value: "$0.00", sub: "Aave not on Ritual yet" },
+          { label: "Total Earned", value: "$0.00", sub: "Aave not on Ritual yet" },
+          { label: "Best APY (mainnet ref)", value: pools?.[0] ? `${pools[0].apy.toFixed(2)}%` : "…", sub: pools?.[0]?.symbol ?? "Aave V3" },
         ].map(({ label, value, sub }) => (
           <div key={label} className="px-4 py-3" style={{ backgroundColor: "rgba(4,5,10,0.7)" }}>
             <p className="font-mono text-[10px] uppercase" style={{ color: "rgba(255,255,255,0.25)" }}>{label}</p>
@@ -99,9 +76,33 @@ export function Yield() {
 
       {/* Live APY Monitor */}
       <Card>
-        <Label>Live APY Monitor · Aave V3</Label>
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <Label>Live APY Monitor · Aave V3 · Mainnet Reference</Label>
+          <button
+            type="button"
+            onClick={() => void refetch()}
+            disabled={isLoading}
+            className="rounded-lg px-2.5 py-1 font-mono text-[10px] transition hover:bg-white/5"
+            style={{ border: "1px solid rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.4)" }}
+          >
+            {isLoading ? "…" : "Refresh"}
+          </button>
+        </div>
+
         {isLoading ? (
           <p className="text-sm" style={{ color: "rgba(255,255,255,0.3)" }}>Loading…</p>
+        ) : isError ? (
+          <div className="flex items-center gap-3">
+            <p className="text-sm" style={{ color: "rgba(255,71,87,0.8)" }}>Failed to load APY data</p>
+            <button
+              type="button"
+              onClick={() => void refetch()}
+              className="rounded-lg px-2.5 py-1 text-xs transition hover:opacity-80"
+              style={{ backgroundColor: "rgba(255,71,87,0.1)", color: "#FF4757", border: "1px solid rgba(255,71,87,0.2)" }}
+            >
+              Retry
+            </button>
+          </div>
         ) : !pools?.length ? (
           <p className="text-sm" style={{ color: "rgba(255,255,255,0.3)" }}>No pools found</p>
         ) : (
@@ -125,89 +126,59 @@ export function Yield() {
           </div>
         )}
         <p className="mt-2 font-mono text-[10px]" style={{ color: "rgba(255,255,255,0.2)" }}>
-          Via DefiLlama · refreshes every 5 min
+          Via DefiLlama · refreshes every 5 min · mainnet rates shown for reference only
         </p>
       </Card>
 
-      {/* Aave V3 Positions (coming soon overlay) */}
-      <div className="relative">
-        <Card>
-          <Label>Aave V3 Positions</Label>
-          <div className="grid gap-4 sm:grid-cols-2">
-            {["USDC", "USDT"].map((sym) => (
-              <div key={sym} className="rounded-xl border p-4" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
-                <p className="font-semibold text-white">{sym}</p>
-                <p className="mt-1 font-mono text-2xl text-white">$0.00</p>
-                <div className="mt-3 flex gap-2">
-                  <button className="flex-1 rounded-xl border px-3 py-2 text-sm" style={{ borderColor: "rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.3)" }}>Supply</button>
-                  <button className="flex-1 rounded-xl border px-3 py-2 text-sm" style={{ borderColor: "rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.3)" }}>Withdraw</button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </Card>
-        <ComingSoonOverlay />
-      </div>
+      {/* Yield availability notice */}
+      <Card>
+        <Label>Yield on Ritual Chain</Label>
+        <div
+          className="rounded-xl border px-4 py-4"
+          style={{ borderColor: "rgba(91,79,232,0.2)", backgroundColor: "rgba(91,79,232,0.05)" }}
+        >
+          <p className="text-sm font-semibold text-white">Coming when Aave V3 deploys on Ritual Chain mainnet</p>
+          <p className="mt-2 text-sm leading-relaxed" style={{ color: "rgba(255,255,255,0.5)" }}>
+            Yield strategies will be available when Aave V3 deploys on Ritual Chain mainnet.
+            Current APY data is shown for reference — these are mainnet Ethereum and Arbitrum rates.
+          </p>
+          <p className="mt-2 text-sm leading-relaxed" style={{ color: "rgba(255,255,255,0.4)" }}>
+            Once live, the agent will automatically supply idle stablecoins to the highest-yielding
+            Aave pool and rotate positions based on your yield settings below.
+          </p>
+        </div>
+      </Card>
 
       {/* Yield Settings */}
       <Card>
-        <Label>Yield Settings</Label>
+        <Label>Yield Settings · Saved for when Aave deploys</Label>
         <div className="grid gap-4 sm:grid-cols-3">
           {[
-            { label: "Min APY threshold (%)", value: minApy, set: setMinApy },
-            { label: "Rotate below (%)", value: rotateBelow, set: setRotateBelow },
-            { label: "Max supply (%)", value: maxSupply, set: setMaxSupply },
-          ].map(({ label, value, set }) => (
-            <label key={label} className="space-y-1">
+            { label: "Min APY threshold (%)", key: "minApy", defaultValue: "3" },
+            { label: "Rotate below (%)", key: "rotateBelow", defaultValue: "1" },
+            { label: "Max supply (%)", key: "maxSupply", defaultValue: "80" },
+          ].map(({ label, key, defaultValue }) => (
+            <label key={key} className="space-y-1">
               <span className="font-mono text-[10px] uppercase" style={{ color: "rgba(255,255,255,0.3)" }}>{label}</span>
               <input
                 type="number"
-                value={value}
-                onChange={(e) => set(e.target.value)}
+                defaultValue={defaultValue}
+                onChange={(e) => {
+                  if (typeof window !== "undefined") {
+                    const stored = JSON.parse(localStorage.getItem("rebal-yield-settings") ?? "{}") as Record<string, string>;
+                    stored[key] = e.target.value;
+                    localStorage.setItem("rebal-yield-settings", JSON.stringify(stored));
+                  }
+                }}
                 className="w-full rounded-xl border px-3 py-2 text-sm focus:outline-none"
                 style={{ backgroundColor: "rgba(255,255,255,0.04)", borderColor: "rgba(255,255,255,0.08)", color: "white" }}
               />
             </label>
           ))}
         </div>
-        <button
-          type="button"
-          onClick={() => {
-            if (typeof window !== "undefined") {
-              localStorage.setItem("rebal-yield-settings", JSON.stringify({ minApy, rotateBelow, maxSupply }));
-            }
-          }}
-          className="mt-4 rounded-xl px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90"
-          style={{ backgroundColor: "#5B4FE8" }}
-        >
-          Save Settings
-        </button>
-      </Card>
-
-      {/* Yield History placeholder */}
-      <Card>
-        <Label>Yield History</Label>
-        <div className="space-y-2">
-          {[
-            { date: "2026-06-10", action: "Supply USDC", amount: "$500.00", apy: "4.2%" },
-            { date: "2026-06-08", action: "Harvest USDT", amount: "$2.15", apy: "3.8%" },
-          ].map((r) => (
-            <div
-              key={r.date + r.action}
-              className="flex items-center justify-between rounded-xl border px-3 py-2"
-              style={{ borderColor: "rgba(255,255,255,0.05)" }}
-            >
-              <div>
-                <p className="text-sm text-white">{r.action}</p>
-                <p className="font-mono text-[10px]" style={{ color: "rgba(255,255,255,0.3)" }}>{r.date}</p>
-              </div>
-              <div className="text-right">
-                <p className="font-mono text-sm text-white">{r.amount}</p>
-                <p className="font-mono text-[10px]" style={{ color: "#D4A847" }}>{r.apy}</p>
-              </div>
-            </div>
-          ))}
-        </div>
+        <p className="mt-3 font-mono text-[10px]" style={{ color: "rgba(255,255,255,0.2)" }}>
+          Settings auto-save on change
+        </p>
       </Card>
     </div>
   );

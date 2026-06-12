@@ -1,17 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { useTickEvents } from "@/hooks/useTickEvents";
-import { WETH, WBTC, USDC, USDT } from "@/lib/constants";
-
-const TOKENS = [
-  { key: "WETH", address: WETH, label: "WETH", decimals: 18 },
-  { key: "WBTC", address: WBTC, label: "WBTC", decimals: 8 },
-  { key: "USDC", address: USDC, label: "USDC", decimals: 6 },
-  { key: "USDT", address: USDT, label: "USDT", decimals: 6 },
-] as const;
-
-const USD = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2 });
 
 function Card({ children, style, className = "" }: { children: React.ReactNode; style?: React.CSSProperties; className?: string }) {
   return (
@@ -33,13 +23,10 @@ function Label({ children }: { children: React.ReactNode }) {
 }
 
 export function Dex() {
-  const [fromToken, setFromToken] = useState("WETH");
-  const [toToken, setToToken] = useState("USDC");
-  const [amount, setAmount] = useState("");
+  const router = useRouter();
   const { events } = useTickEvents();
 
-  // Swap history from events (PortfolioAgent doesn't have SwapExecuted yet — show empty)
-  const swapEvents: typeof events = [];
+  const swapEvents = events.filter((e) => !e.headline.toLowerCase().includes("hold"));
 
   return (
     <div className="space-y-4">
@@ -50,9 +37,9 @@ export function Dex() {
       >
         {[
           { label: "Total Swapped", value: "$0.00" },
-          { label: "Last Swap", value: "—" },
+          { label: "Last Swap", value: swapEvents[0] ? `Block ${swapEvents[0].blockNumber}` : "—" },
           { label: "Avg Slippage", value: "—" },
-          { label: "Best Route", value: "—" },
+          { label: "Agent Swaps", value: String(swapEvents.length) },
         ].map(({ label, value }) => (
           <div key={label} className="px-4 py-3" style={{ backgroundColor: "rgba(4,5,10,0.7)" }}>
             <p className="font-mono text-[10px] uppercase" style={{ color: "rgba(255,255,255,0.25)" }}>{label}</p>
@@ -61,77 +48,82 @@ export function Dex() {
         ))}
       </div>
 
-      {/* Testnet banner */}
-      <div
-        className="flex items-center gap-3 rounded-2xl border px-4 py-3"
-        style={{ backgroundColor: "rgba(212,168,71,0.06)", borderColor: "rgba(212,168,71,0.2)" }}
-      >
-        <span style={{ color: "#D4A847" }}>⚠</span>
-        <p className="text-sm" style={{ color: "rgba(212,168,71,0.85)" }}>
-          Testnet: swap execution not yet available on Ritual Chain 1979. Route preview shows 1inch data when available.
-        </p>
-      </div>
-
       <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
-        {/* Manual Swap Card */}
-        <Card>
-          <Label>Manual Swap</Label>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="space-y-1">
-              <span className="text-xs" style={{ color: "rgba(255,255,255,0.4)" }}>From</span>
-              <select
-                value={fromToken}
-                onChange={(e) => setFromToken(e.target.value)}
-                className="w-full rounded-xl border px-3 py-2 text-sm focus:outline-none"
-                style={{ backgroundColor: "rgba(255,255,255,0.04)", borderColor: "rgba(255,255,255,0.08)", color: "white" }}
-              >
-                {TOKENS.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
-              </select>
-            </label>
-            <label className="space-y-1">
-              <span className="text-xs" style={{ color: "rgba(255,255,255,0.4)" }}>To</span>
-              <select
-                value={toToken}
-                onChange={(e) => setToToken(e.target.value)}
-                className="w-full rounded-xl border px-3 py-2 text-sm focus:outline-none"
-                style={{ backgroundColor: "rgba(255,255,255,0.04)", borderColor: "rgba(255,255,255,0.08)", color: "white" }}
-              >
-                {TOKENS.filter((t) => t.key !== fromToken).map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
-              </select>
-            </label>
-          </div>
-          <input
-            type="number"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            placeholder="Amount"
-            className="mt-3 w-full rounded-xl border px-3 py-2 text-sm focus:outline-none"
-            style={{ backgroundColor: "rgba(255,255,255,0.04)", borderColor: "rgba(255,255,255,0.08)", color: "white" }}
-          />
+        {/* How swaps work */}
+        <div className="space-y-4">
+          <Card>
+            <Label>Swap Execution</Label>
+            <div
+              className="rounded-xl border px-4 py-4"
+              style={{ borderColor: "rgba(91,79,232,0.2)", backgroundColor: "rgba(91,79,232,0.05)" }}
+            >
+              <p className="text-sm font-semibold text-white">Handled automatically by the onchain agent</p>
+              <p className="mt-2 text-sm leading-relaxed" style={{ color: "rgba(255,255,255,0.5)" }}>
+                Swaps are executed automatically by the onchain agent. Set your target allocation in the
+                Rebalance tab and the agent will handle execution on the next tick.
+              </p>
+              <p className="mt-3 text-sm leading-relaxed" style={{ color: "rgba(255,255,255,0.4)" }}>
+                1inch and Uniswap are not deployed on Ritual Chain 1979. Swap execution runs directly
+                through the PortfolioAgent contract during scheduled rebalance ticks.
+              </p>
+            </div>
 
-          {/* Route preview */}
-          <div
-            className="mt-3 rounded-xl border px-3 py-2"
-            style={{ borderColor: "rgba(255,255,255,0.05)", backgroundColor: "rgba(255,255,255,0.02)" }}
-          >
-            <p className="font-mono text-[10px] uppercase" style={{ color: "rgba(255,255,255,0.25)" }}>Route Preview</p>
-            <p className="mt-1 text-sm" style={{ color: "rgba(255,255,255,0.3)" }}>
-              Route preview not available on testnet (chain 1979 not supported by 1inch v6)
-            </p>
-          </div>
+            <div
+              className="mt-3 rounded-xl border px-3 py-2"
+              style={{ borderColor: "rgba(255,255,255,0.05)", backgroundColor: "rgba(255,255,255,0.02)" }}
+            >
+              <p className="font-mono text-[10px] uppercase" style={{ color: "rgba(255,255,255,0.25)" }}>How it works</p>
+              <ol className="mt-2 space-y-1.5">
+                {[
+                  "Set target allocation percentages in the Rebalance tab",
+                  "Agent fetches live prices on each HTTP tick",
+                  "LLM tick decides whether to rebalance based on drift",
+                  "PortfolioAgent executes swaps to reach target allocation",
+                ].map((step, i) => (
+                  <li key={i} className="flex items-start gap-2 text-sm" style={{ color: "rgba(255,255,255,0.45)" }}>
+                    <span className="shrink-0 font-mono text-[10px] mt-0.5" style={{ color: "#5B4FE8" }}>{i + 1}.</span>
+                    {step}
+                  </li>
+                ))}
+              </ol>
+            </div>
 
-          <button
-            type="button"
-            disabled
-            className="mt-3 w-full rounded-xl px-4 py-2 text-sm font-semibold transition disabled:opacity-40"
-            style={{ backgroundColor: "#5B4FE8", color: "white" }}
-            title="Not available on testnet"
-          >
-            Execute Swap (coming in next release)
-          </button>
-        </Card>
+            <button
+              type="button"
+              onClick={() => router.push("/app?tab=rebalance")}
+              className="mt-4 w-full rounded-xl px-4 py-2.5 text-sm font-semibold text-white transition hover:opacity-90"
+              style={{ backgroundColor: "#5B4FE8" }}
+            >
+              Go to Rebalance →
+            </button>
+          </Card>
 
-        {/* Safety Rules + DEX Settings */}
+          {/* Swap History */}
+          <Card>
+            <Label>Swap History · Agent Executed</Label>
+            {swapEvents.length === 0 ? (
+              <p className="text-sm" style={{ color: "rgba(255,255,255,0.3)" }}>
+                No agent swaps yet. Rebalance events will appear here once the agent executes trades.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {swapEvents.slice(0, 5).map((e, i) => (
+                  <div key={i} className="flex items-center justify-between rounded-xl border px-3 py-2" style={{ borderColor: "rgba(255,255,255,0.05)" }}>
+                    <div>
+                      <p className="text-sm text-white">{e.headline}</p>
+                      {e.reason && (
+                        <p className="font-mono text-[10px]" style={{ color: "rgba(255,255,255,0.3)" }}>{e.reason.slice(0, 80)}</p>
+                      )}
+                    </div>
+                    <p className="shrink-0 font-mono text-xs" style={{ color: "rgba(255,255,255,0.4)" }}>Block {String(e.blockNumber)}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+        </div>
+
+        {/* Safety Rules */}
         <div className="space-y-4">
           <Card>
             <Label>Safety Rules</Label>
@@ -150,27 +142,31 @@ export function Dex() {
               ))}
             </ul>
           </Card>
+
           <Card>
             <Label>DEX Settings</Label>
             <div className="space-y-3">
-              <label className="space-y-1">
-                <span className="font-mono text-[10px] uppercase" style={{ color: "rgba(255,255,255,0.3)" }}>Preferred DEX</span>
-                <select
-                  defaultValue="1inch"
-                  onChange={(e) => localStorage.setItem("rebal-dex", e.target.value)}
-                  className="w-full rounded-xl border px-3 py-2 text-sm focus:outline-none"
-                  style={{ backgroundColor: "rgba(255,255,255,0.04)", borderColor: "rgba(255,255,255,0.08)", color: "white" }}
-                >
-                  <option value="1inch">1inch</option>
-                  <option value="uniswap">Uniswap</option>
-                </select>
-              </label>
               <label className="space-y-1">
                 <span className="font-mono text-[10px] uppercase" style={{ color: "rgba(255,255,255,0.3)" }}>Min swap size ($)</span>
                 <input
                   type="number"
                   defaultValue="10"
-                  onChange={(e) => localStorage.setItem("rebal-min-swap", e.target.value)}
+                  onChange={(e) => {
+                    if (typeof window !== "undefined") localStorage.setItem("rebal-min-swap", e.target.value);
+                  }}
+                  className="w-full rounded-xl border px-3 py-2 text-sm focus:outline-none"
+                  style={{ backgroundColor: "rgba(255,255,255,0.04)", borderColor: "rgba(255,255,255,0.08)", color: "white" }}
+                />
+              </label>
+              <label className="space-y-1">
+                <span className="font-mono text-[10px] uppercase" style={{ color: "rgba(255,255,255,0.3)" }}>Max slippage (%)</span>
+                <input
+                  type="number"
+                  defaultValue="1"
+                  step="0.1"
+                  onChange={(e) => {
+                    if (typeof window !== "undefined") localStorage.setItem("rebal-max-slippage", e.target.value);
+                  }}
                   className="w-full rounded-xl border px-3 py-2 text-sm focus:outline-none"
                   style={{ backgroundColor: "rgba(255,255,255,0.04)", borderColor: "rgba(255,255,255,0.08)", color: "white" }}
                 />
@@ -179,25 +175,6 @@ export function Dex() {
           </Card>
         </div>
       </div>
-
-      {/* Swap History */}
-      <Card>
-        <Label>Swap History</Label>
-        {swapEvents.length === 0 ? (
-          <p className="text-sm" style={{ color: "rgba(255,255,255,0.3)" }}>
-            No swaps executed yet. SwapExecuted events will appear here once the agent performs trades.
-          </p>
-        ) : (
-          <div className="space-y-2">
-            {swapEvents.map((e, i) => (
-              <div key={i} className="flex items-center justify-between rounded-xl border px-3 py-2" style={{ borderColor: "rgba(255,255,255,0.05)" }}>
-                <p className="text-sm text-white">{e.headline}</p>
-                <p className="font-mono text-xs" style={{ color: "rgba(255,255,255,0.4)" }}>Block {String(e.blockNumber)}</p>
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>
     </div>
   );
 }
