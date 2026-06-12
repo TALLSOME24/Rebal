@@ -86,11 +86,8 @@ const NAV_LINKS_APP = [
 ] as const;
 
 const MORE_ITEMS = [
-  { label: "Yield", tab: "yield", badge: "v2" },
-  { label: "DEX", tab: "dex", badge: "v2" },
-  { label: "Accounts", tab: "accounts", badge: "v2" },
-  null,
   { label: "Settings", tab: "settings" },
+  null,
   { label: "Docs", href: "https://docs.ritual.net", external: true },
   { label: "Explorer", href: "https://explorer.ritualfoundation.org", external: true },
 ] as const;
@@ -246,14 +243,6 @@ export function Nav({ variant }: { variant: NavVariant }) {
                           onClick={() => setMoreOpen(false)}
                         >
                           {item.label}
-                          {"badge" in item && item.badge && (
-                            <span
-                              className="rounded-full px-1.5 py-0.5 font-mono text-[9px] font-bold"
-                              style={{ backgroundColor: "rgba(91,79,232,0.2)", color: "#5B4FE8" }}
-                            >
-                              {item.badge}
-                            </span>
-                          )}
                         </Link>
                       );
                     }

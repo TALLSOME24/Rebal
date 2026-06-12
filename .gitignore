@@ -8,3 +8,5 @@ artifacts
 typechain-types
 coverage
 *.log
+.vercel
+.env*

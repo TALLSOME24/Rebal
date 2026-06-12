@@ -9,9 +9,7 @@ import { Dashboard } from "@/components/tabs/Dashboard";
 import { Rebalance } from "@/components/tabs/Rebalance";
 import { Agent } from "@/components/tabs/Agent";
 import { Tokens } from "@/components/tabs/Tokens";
-import { Yield } from "@/components/tabs/Yield";
 import { Dex } from "@/components/tabs/Dex";
-import { Accounts } from "@/components/tabs/Accounts";
 import { Settings } from "@/components/tabs/Settings";
 
 class TabErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
@@ -38,27 +36,23 @@ class TabErrorBoundary extends Component<{ children: ReactNode }, { error: Error
 const TABS = [
   { id: "dashboard", label: "Dashboard" },
   { id: "rebalance", label: "Rebalance" },
-  { id: "agent", label: "Agent" },
-  { id: "tokens", label: "Tokens" },
-  { id: "yield", label: "Yield", badge: "v2" },
-  { id: "dex", label: "DEX", badge: "v2" },
-  { id: "accounts", label: "Accounts", badge: "v2" },
-  { id: "settings", label: "Settings" },
+  { id: "agent",     label: "Agent" },
+  { id: "tokens",    label: "Tokens" },
+  { id: "dex",       label: "DEX" },
+  { id: "settings",  label: "Settings" },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
 
 function TabContent({ tab }: { tab: TabId }) {
   switch (tab) {
-    case "dashboard":  return <Dashboard />;
-    case "rebalance":  return <Rebalance />;
-    case "agent":      return <Agent />;
-    case "tokens":     return <Tokens />;
-    case "yield":      return <Yield />;
-    case "dex":        return <Dex />;
-    case "accounts":   return <Accounts />;
-    case "settings":   return <Settings />;
-    default:           return <Dashboard />;
+    case "dashboard": return <Dashboard />;
+    case "rebalance": return <Rebalance />;
+    case "agent":     return <Agent />;
+    case "tokens":    return <Tokens />;
+    case "dex":       return <Dex />;
+    case "settings":  return <Settings />;
+    default:          return <Dashboard />;
   }
 }
 
@@ -67,7 +61,6 @@ function AppShell() {
   const router = useRouter();
   const rawTab = searchParams?.get("tab") ?? "dashboard";
   const activeTab = (TABS.find((t) => t.id === rawTab)?.id ?? "dashboard") as TabId;
-  console.log("[AppShell] activeTab:", activeTab);
 
   const setTab = (id: TabId) => {
     router.push(`/app?tab=${id}`, { scroll: false });
@@ -99,14 +92,6 @@ function AppShell() {
               }}
             >
               {t.label}
-              {"badge" in t && t.badge && (
-                <span
-                  className="rounded-full px-1.5 py-0.5 font-mono text-[9px] font-bold"
-                  style={{ backgroundColor: "rgba(91,79,232,0.2)", color: "#5B4FE8" }}
-                >
-                  {t.badge}
-                </span>
-              )}
             </button>
           ))}
         </div>
