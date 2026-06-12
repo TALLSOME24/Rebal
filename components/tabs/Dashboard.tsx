@@ -1,9 +1,9 @@
 "use client";
 
 import { useAccount, useReadContract } from "wagmi";
-import { formatEther } from "viem";
+import { formatEther, type Address } from "viem";
 import { portfolioAgentABI } from "@/lib/abi/portfolioAgentABI";
-import { PORTFOLIO_AGENT, WETH, WBTC, USDC, USDT } from "@/lib/constants";
+import { WETH, WBTC, USDC, USDT } from "@/lib/constants";
 import { usePortfolioValue } from "@/hooks/usePortfolioValue";
 import { useAgentState } from "@/hooks/useAgentState";
 import { useTickEvents, type TickEvent } from "@/hooks/useTickEvents";
@@ -38,17 +38,7 @@ function Label({ children }: { children: React.ReactNode }) {
   );
 }
 
-function StatCell({
-  label,
-  value,
-  sub,
-  color,
-}: {
-  label: string;
-  value: string;
-  sub?: string;
-  color?: string;
-}) {
+function StatCell({ label, value, sub, color }: { label: string; value: string; sub?: string; color?: string }) {
   return (
     <div className="px-4 py-3">
       <Label>{label}</Label>
@@ -76,18 +66,11 @@ function ConfidenceBar({ value }: { value: number }) {
 function DecisionCard({ event }: { event: TickEvent }) {
   const isHold = event.headline.toLowerCase().includes("hold");
   const isFailed = event.type === "failed";
-  const borderColor = isFailed
-    ? "rgba(255,71,87,0.2)"
-    : isHold
-    ? "rgba(255,255,255,0.08)"
-    : "rgba(91,79,232,0.25)";
+  const borderColor = isFailed ? "rgba(255,71,87,0.2)" : isHold ? "rgba(255,255,255,0.08)" : "rgba(91,79,232,0.25)";
   const iconColor = isFailed ? "#FF4757" : isHold ? "rgba(255,255,255,0.3)" : "#5B4FE8";
 
   return (
-    <div
-      className="rounded-xl border p-3"
-      style={{ backgroundColor: "rgba(255,255,255,0.02)", borderColor }}
-    >
+    <div className="rounded-xl border p-3" style={{ backgroundColor: "rgba(255,255,255,0.02)", borderColor }}>
       <div className="flex items-start gap-2">
         <span className="mt-0.5 text-base" style={{ color: iconColor }}>
           {isFailed ? "✕" : isHold ? "⏸" : "⟳"}
@@ -119,24 +102,22 @@ function DecisionCard({ event }: { event: TickEvent }) {
   );
 }
 
-export function Dashboard() {
+export function Dashboard({ agentAddress }: { agentAddress: Address }) {
   const router = useRouter();
-  const { address } = useAccount();
-  const { totalValue, loading: pvLoading } = usePortfolioValue();
-  const agentState = useAgentState();
-  const { events, refresh: refreshEvents, loading: eventsLoading } = useTickEvents();
+  const { totalValue, loading: pvLoading } = usePortfolioValue(agentAddress);
+  const agentState = useAgentState(agentAddress);
+  const { events, refresh: refreshEvents, loading: eventsLoading } = useTickEvents(agentAddress);
   const { ethPrice, btcPrice, lastUpdated } = usePrices();
 
-  // RitualWallet balance on agent contract
   const { data: ritualBal } = useReadContract({
-    address: PORTFOLIO_AGENT,
+    address: agentAddress,
     abi: portfolioAgentABI,
     functionName: "contractRitualBalance",
     query: { refetchInterval: 12_000 },
   });
 
   const ritualBalEth = ritualBal ? Number(formatEther(ritualBal as bigint)) : 0;
-  const ticksLeft = ritualBal ? Math.floor(Number(formatEther(ritualBal as bigint)) / 0.01) : 0;
+  const ticksLeft = Math.floor(ritualBalEth / 0.01);
 
   const allocationTotal = agentState.ethBps + agentState.wbtcBps + agentState.usdcBps;
   const usdtBps = Math.max(0, 10000 - allocationTotal);
@@ -160,24 +141,9 @@ export function Dashboard() {
         style={{ backgroundColor: "rgba(255,255,255,0.05)", gap: "1px" }}
       >
         {[
-          {
-            label: "Total Value",
-            value: pvLoading ? "…" : USD.format(totalValue),
-            sub: `live · CoinGecko · ${lastUpdatedText}`,
-            color: "#00C896",
-          },
-          {
-            label: "RitualWallet",
-            value: `${ritualBalEth.toFixed(4)} RITUAL`,
-            sub: `~${ticksLeft} ticks left`,
-            color: "white",
-          },
-          {
-            label: "Yield Earned",
-            value: "$0.00",
-            sub: "Aave not deployed",
-            color: "#D4A847",
-          },
+          { label: "Total Value", value: pvLoading ? "…" : USD.format(totalValue), sub: `live · CoinGecko · ${lastUpdatedText}`, color: "#00C896" },
+          { label: "RitualWallet", value: `${ritualBalEth.toFixed(4)} RITUAL`, sub: `~${ticksLeft} ticks left`, color: "white" },
+          { label: "Yield Earned", value: "$0.00", sub: "Aave not deployed", color: "#D4A847" },
           {
             label: "Agent Status",
             value: agentState.registered ? "Running" : "Not started",
@@ -193,21 +159,15 @@ export function Dashboard() {
 
       {/* Main grid */}
       <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
-        {/* Left column */}
         <div className="space-y-4">
           {/* Allocation */}
           <Card>
             <Label>Allocation</Label>
             {agentState.registered ? (
               <div className="mt-3 space-y-2">
-                {/* Color bar */}
                 <div className="flex h-2 overflow-hidden rounded-full">
                   {allocationTokens.map((t) => (
-                    <div
-                      key={t.label}
-                      style={{ width: `${t.bps / 100}%`, backgroundColor: t.color }}
-                      title={`${t.label}: ${t.bps / 100}%`}
-                    />
+                    <div key={t.label} style={{ width: `${t.bps / 100}%`, backgroundColor: t.color }} title={`${t.label}: ${t.bps / 100}%`} />
                   ))}
                 </div>
                 {allocationTokens.map((t) => (
@@ -252,10 +212,7 @@ export function Dashboard() {
               </button>
             </div>
             {events.length === 0 ? (
-              <div
-                className="rounded-xl border py-8 text-center"
-                style={{ borderColor: "rgba(255,255,255,0.05)", color: "rgba(255,255,255,0.3)" }}
-              >
+              <div className="rounded-xl border py-8 text-center" style={{ borderColor: "rgba(255,255,255,0.05)", color: "rgba(255,255,255,0.3)" }}>
                 <p className="text-sm">No decisions yet</p>
                 <p className="mt-1 font-mono text-[10px]">Waiting for agent ticks to settle on-chain</p>
               </div>
@@ -269,7 +226,6 @@ export function Dashboard() {
           </Card>
         </div>
 
-        {/* Right column */}
         <div className="space-y-4">
           {/* TEE Attestation */}
           <Card style={{ borderColor: "rgba(0,200,150,0.2)" }}>
@@ -278,21 +234,14 @@ export function Dashboard() {
               {agentState.executor ? (
                 <>
                   <div className="flex items-center gap-2">
-                    <span className="text-xs font-semibold" style={{ color: "#00C896" }}>
-                      Verified ✓
-                    </span>
+                    <span className="text-xs font-semibold" style={{ color: "#00C896" }}>Verified ✓</span>
                   </div>
-                  <p
-                    className="mt-1 break-all font-mono text-[11px]"
-                    style={{ color: "rgba(255,255,255,0.5)" }}
-                  >
+                  <p className="mt-1 break-all font-mono text-[11px]" style={{ color: "rgba(255,255,255,0.5)" }}>
                     {agentState.executor}
                   </p>
                 </>
               ) : (
-                <p className="text-sm" style={{ color: "rgba(255,255,255,0.3)" }}>
-                  Waiting for first tick
-                </p>
+                <p className="text-sm" style={{ color: "rgba(255,255,255,0.3)" }}>Waiting for first tick</p>
               )}
             </div>
           </Card>
@@ -310,12 +259,8 @@ export function Dashboard() {
                 { k: "executor", v: agentState.executor ? `${agentState.executor.slice(0, 8)}…` : "—" },
               ].map(({ k, v }) => (
                 <div key={k} className="flex items-center justify-between gap-2">
-                  <span className="font-mono text-[11px]" style={{ color: "rgba(255,255,255,0.3)" }}>
-                    {k}
-                  </span>
-                  <span className="font-mono text-[11px]" style={{ color: "rgba(255,255,255,0.75)" }}>
-                    {v}
-                  </span>
+                  <span className="font-mono text-[11px]" style={{ color: "rgba(255,255,255,0.3)" }}>{k}</span>
+                  <span className="font-mono text-[11px]" style={{ color: "rgba(255,255,255,0.75)" }}>{v}</span>
                 </div>
               ))}
             </div>
@@ -336,10 +281,7 @@ export function Dashboard() {
                   type="button"
                   onClick={() => router.push(`/app?tab=${tab}`)}
                   className="w-full rounded-xl border px-3 py-2 text-left text-sm transition hover:bg-white/5"
-                  style={{
-                    borderColor: "rgba(255,255,255,0.06)",
-                    color: "rgba(255,255,255,0.6)",
-                  }}
+                  style={{ borderColor: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.6)" }}
                 >
                   {label} →
                 </button>

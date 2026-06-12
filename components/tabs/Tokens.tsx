@@ -6,6 +6,7 @@ import { formatUnits, parseUnits, zeroAddress } from "viem";
 import { mockERC20ABI } from "@/lib/abi/mockERC20ABI";
 import { WETH, WBTC, USDC, USDT } from "@/lib/constants";
 import { useAgentState } from "@/hooks/useAgentState";
+import type { Address } from "viem";
 import { usePrices } from "@/hooks/usePrices";
 import { useToast } from "@/components/Toast";
 
@@ -35,13 +36,13 @@ function useCopy() {
   );
 }
 
-export function Tokens() {
+export function Tokens({ agentAddress }: { agentAddress: Address }) {
   const { address } = useAccount();
   const publicClient = usePublicClient();
   const { data: walletClient } = useWalletClient();
   const { toast } = useToast();
   const copy = useCopy();
-  const agentState = useAgentState();
+  const agentState = useAgentState(agentAddress);
   const { ethPrice, btcPrice } = usePrices();
 
   const [claiming, setClaiming] = useState(false);

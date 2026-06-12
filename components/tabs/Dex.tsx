@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useTickEvents } from "@/hooks/useTickEvents";
+import type { Address } from "viem";
 
 function Card({ children, style, className = "" }: { children: React.ReactNode; style?: React.CSSProperties; className?: string }) {
   return (
@@ -22,9 +23,9 @@ function Label({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function Dex() {
+export function Dex({ agentAddress }: { agentAddress: Address }) {
   const router = useRouter();
-  const { events } = useTickEvents();
+  const { events } = useTickEvents(agentAddress);
 
   const swapEvents = events.filter((e) => !e.headline.toLowerCase().includes("hold"));
 

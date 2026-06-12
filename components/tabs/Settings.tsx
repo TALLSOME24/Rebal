@@ -1,28 +1,17 @@
 "use client";
 
 import { useState } from "react";
-import { PORTFOLIO_AGENT, RITUAL_WALLET, SCHEDULER, HTTP_PRECOMPILE, LLM_PRECOMPILE, WETH, WBTC, USDC, USDT, CHAIN_ID } from "@/lib/constants";
+import { FACTORY_ADDRESS, RITUAL_WALLET, SCHEDULER, HTTP_PRECOMPILE, LLM_PRECOMPILE, WETH, WBTC, USDC, USDT, CHAIN_ID } from "@/lib/constants";
 import { useToast } from "@/components/Toast";
+import type { Address } from "viem";
 
 const NETWORK_DETAILS = [
-  { k: "Chain ID", v: String(CHAIN_ID) },
-  { k: "Network Name", v: "Ritual Chain" },
-  { k: "Symbol", v: "RITUAL" },
-  { k: "RPC URL", v: "https://rpc.ritualfoundation.org" },
-  { k: "Explorer", v: "https://explorer.ritualfoundation.org" },
-  { k: "Block time", v: "~350ms" },
-] as const;
-
-const CONTRACT_ADDRS = [
-  { label: "PortfolioAgent", address: PORTFOLIO_AGENT },
-  { label: "RitualWallet", address: RITUAL_WALLET },
-  { label: "Scheduler", address: SCHEDULER },
-  { label: "HTTP Precompile", address: HTTP_PRECOMPILE },
-  { label: "LLM Precompile", address: LLM_PRECOMPILE },
-  { label: "WETH", address: WETH },
-  { label: "WBTC", address: WBTC },
-  { label: "USDC", address: USDC },
-  { label: "USDT", address: USDT },
+  { k: "Chain ID",      v: String(CHAIN_ID) },
+  { k: "Network Name",  v: "Ritual Chain" },
+  { k: "Symbol",        v: "RITUAL" },
+  { k: "RPC URL",       v: "https://rpc.ritualfoundation.org" },
+  { k: "Explorer",      v: "https://explorer.ritualfoundation.org" },
+  { k: "Block time",    v: "~350ms" },
 ] as const;
 
 const ROADMAP = [
@@ -62,7 +51,45 @@ function Label({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function Settings() {
+function AddrRow({ label, address, badge, copiedAddr, onCopy }: {
+  label: string;
+  address: string;
+  badge?: string;
+  copiedAddr: string | null;
+  onCopy: (a: string) => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onCopy(address)}
+      className="flex w-full items-center justify-between rounded-xl border px-3 py-2 transition hover:bg-white/5"
+      style={{ borderColor: "rgba(255,255,255,0.04)" }}
+    >
+      <div className="flex items-center gap-2">
+        <span className="text-xs" style={{ color: "rgba(255,255,255,0.4)" }}>{label}</span>
+        {badge && (
+          <span
+            className="rounded-full border px-1.5 py-0.5 font-mono text-[9px]"
+            style={{ borderColor: "rgba(0,200,150,0.3)", color: "#00C896" }}
+          >
+            {badge}
+          </span>
+        )}
+      </div>
+      <div className="flex items-center gap-2">
+        <span className="font-mono text-[11px]" style={{ color: copiedAddr === address ? "#00C896" : "rgba(255,255,255,0.55)" }}>
+          {copiedAddr === address ? "Copied!" : address}
+        </span>
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" style={{ color: "rgba(255,255,255,0.2)" }}>
+          <rect x="1" y="4" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.2" />
+          <path d="M4 4V2.5A1.5 1.5 0 015.5 1h4A1.5 1.5 0 0111 2.5v4A1.5 1.5 0 019.5 8H8" stroke="currentColor" strokeWidth="1.2" />
+        </svg>
+      </div>
+    </button>
+  );
+}
+
+export function Settings({ agentAddress }: { agentAddress: Address }) {
   const { toast } = useToast();
   const [copiedAddr, setCopiedAddr] = useState<string | null>(null);
 
@@ -73,6 +100,18 @@ export function Settings() {
       setTimeout(() => setCopiedAddr(null), 2000);
     });
   };
+
+  const systemContracts = [
+    { label: "Factory",        address: FACTORY_ADDRESS },
+    { label: "RitualWallet",   address: RITUAL_WALLET },
+    { label: "Scheduler",      address: SCHEDULER },
+    { label: "HTTP Precompile", address: HTTP_PRECOMPILE },
+    { label: "LLM Precompile", address: LLM_PRECOMPILE },
+    { label: "WETH",           address: WETH },
+    { label: "WBTC",           address: WBTC },
+    { label: "USDC",           address: USDC },
+    { label: "USDT",           address: USDT },
+  ];
 
   return (
     <div className="space-y-4">
@@ -89,29 +128,27 @@ export function Settings() {
         </div>
       </Card>
 
-      {/* Contracts */}
+      {/* Your Agent */}
+      <Card style={{ borderColor: "rgba(91,79,232,0.2)", backgroundColor: "rgba(91,79,232,0.03)" }}>
+        <Label>Your Agent</Label>
+        <AddrRow
+          label="Your PortfolioAgent"
+          address={agentAddress}
+          badge="yours"
+          copiedAddr={copiedAddr}
+          onCopy={copy}
+        />
+        <p className="mt-2 font-mono text-[10px]" style={{ color: "rgba(255,255,255,0.2)" }}>
+          This contract is owned exclusively by your wallet. Factory: {FACTORY_ADDRESS.slice(0, 10)}…
+        </p>
+      </Card>
+
+      {/* System contracts */}
       <Card>
-        <Label>Contract Addresses</Label>
+        <Label>System Contracts</Label>
         <div className="space-y-1.5">
-          {CONTRACT_ADDRS.map(({ label, address }) => (
-            <button
-              key={address}
-              type="button"
-              onClick={() => copy(address)}
-              className="flex w-full items-center justify-between rounded-xl border px-3 py-2 transition hover:bg-white/5"
-              style={{ borderColor: "rgba(255,255,255,0.04)" }}
-            >
-              <span className="text-xs" style={{ color: "rgba(255,255,255,0.4)" }}>{label}</span>
-              <div className="flex items-center gap-2">
-                <span className="font-mono text-[11px]" style={{ color: copiedAddr === address ? "#00C896" : "rgba(255,255,255,0.55)" }}>
-                  {copiedAddr === address ? "Copied!" : address}
-                </span>
-                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" style={{ color: "rgba(255,255,255,0.2)" }}>
-                  <rect x="1" y="4" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.2" />
-                  <path d="M4 4V2.5A1.5 1.5 0 015.5 1h4A1.5 1.5 0 0111 2.5v4A1.5 1.5 0 019.5 8H8" stroke="currentColor" strokeWidth="1.2" />
-                </svg>
-              </div>
-            </button>
+          {systemContracts.map(({ label, address }) => (
+            <AddrRow key={address} label={label} address={address} copiedAddr={copiedAddr} onCopy={copy} />
           ))}
         </div>
       </Card>

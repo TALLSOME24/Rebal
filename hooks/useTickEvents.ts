@@ -4,7 +4,6 @@ import { useEffect, useState, useCallback } from "react";
 import { useAccount, usePublicClient } from "wagmi";
 import { hexToString, type Address, type Hex } from "viem";
 import { portfolioAgentABI } from "@/lib/abi/portfolioAgentABI";
-import { PORTFOLIO_AGENT } from "@/lib/constants";
 
 export type TickEvent = {
   type: "decision" | "failed";
@@ -44,14 +43,14 @@ function parseCompletionPayload(payload: Hex | undefined): { headline: string; r
   }
 }
 
-export function useTickEvents(): { events: TickEvent[]; refresh: () => void; loading: boolean } {
+export function useTickEvents(agentAddress: Address | undefined): { events: TickEvent[]; refresh: () => void; loading: boolean } {
   const { address } = useAccount();
   const publicClient = usePublicClient();
   const [events, setEvents] = useState<TickEvent[]>([]);
   const [loading, setLoading] = useState(false);
 
   const fetch = useCallback(async () => {
-    if (!publicClient || !address) return;
+    if (!publicClient || !address || !agentAddress) return;
     setLoading(true);
     try {
       const latest = await publicClient.getBlockNumber();
@@ -59,7 +58,7 @@ export function useTickEvents(): { events: TickEvent[]; refresh: () => void; loa
 
       const [decisions, failures] = await Promise.all([
         publicClient.getContractEvents({
-          address: PORTFOLIO_AGENT,
+          address: agentAddress,
           abi: portfolioAgentABI,
           eventName: "RebalanceDecision",
           args: { owner: address as Address },
@@ -67,7 +66,7 @@ export function useTickEvents(): { events: TickEvent[]; refresh: () => void; loa
           toBlock: latest,
         }),
         publicClient.getContractEvents({
-          address: PORTFOLIO_AGENT,
+          address: agentAddress,
           abi: portfolioAgentABI,
           eventName: "TickFailed",
           args: { owner: address as Address },
@@ -121,7 +120,7 @@ export function useTickEvents(): { events: TickEvent[]; refresh: () => void; loa
     } finally {
       setLoading(false);
     }
-  }, [address, publicClient]);
+  }, [address, agentAddress, publicClient]);
 
   useEffect(() => {
     void fetch();

@@ -2,7 +2,6 @@
 
 import { useAccount, useReadContract } from "wagmi";
 import { portfolioAgentABI } from "@/lib/abi/portfolioAgentABI";
-import { PORTFOLIO_AGENT } from "@/lib/constants";
 import type { Address } from "viem";
 
 export type AgentState = {
@@ -33,36 +32,35 @@ const DEFAULT: AgentState = {
   loading: false,
 };
 
-export function useAgentState(): AgentState {
+export function useAgentState(agentAddress: Address | undefined): AgentState {
   const { address } = useAccount();
 
   const { data: portfolio, isLoading } = useReadContract({
-    address: PORTFOLIO_AGENT,
+    address: agentAddress,
     abi: portfolioAgentABI,
     functionName: "portfolios",
     args: address ? [address] : undefined,
-    query: { enabled: !!address, refetchInterval: 30_000 },
+    query: { enabled: !!address && !!agentAddress, refetchInterval: 30_000 },
   });
 
   const { data: tick } = useReadContract({
-    address: PORTFOLIO_AGENT,
+    address: agentAddress,
     abi: portfolioAgentABI,
     functionName: "tickIndex",
     args: address ? [address] : undefined,
-    query: { enabled: !!address, refetchInterval: 30_000 },
+    query: { enabled: !!address && !!agentAddress, refetchInterval: 30_000 },
   });
 
   const { data: lastCycle } = useReadContract({
-    address: PORTFOLIO_AGENT,
+    address: agentAddress,
     abi: portfolioAgentABI,
     functionName: "lastCycleId",
     args: address ? [address] : undefined,
-    query: { enabled: !!address, refetchInterval: 30_000 },
+    query: { enabled: !!address && !!agentAddress, refetchInterval: 30_000 },
   });
 
   if (!portfolio) return { ...DEFAULT, loading: isLoading };
 
-  // portfolio is a tuple: [registered, riskMode, ethBps, wbtcBps, usdcBps, executor, scheduleId, httpExecutor]
   const p = portfolio as unknown as readonly [boolean, number, number, number, number, Address, bigint, Address];
 
   return {

@@ -2,7 +2,11 @@
 
 import { Suspense, Component, type ReactNode } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
+import { useAccount } from "wagmi";
+import { type Address } from "viem";
 import { Nav } from "@/components/Nav";
+import { DeployAgent } from "@/components/DeployAgent";
+import { useUserAgent } from "@/hooks/useUserAgent";
 
 // Direct static imports — React.lazy causes blank renders in Next.js App Router SSR
 import { Dashboard } from "@/components/tabs/Dashboard";
@@ -44,30 +48,82 @@ const TABS = [
 
 type TabId = (typeof TABS)[number]["id"];
 
-function TabContent({ tab }: { tab: TabId }) {
+function TabContent({ tab, agentAddress }: { tab: TabId; agentAddress: Address }) {
   switch (tab) {
-    case "dashboard": return <Dashboard />;
-    case "rebalance": return <Rebalance />;
-    case "agent":     return <Agent />;
-    case "tokens":    return <Tokens />;
-    case "dex":       return <Dex />;
-    case "settings":  return <Settings />;
-    default:          return <Dashboard />;
+    case "dashboard": return <Dashboard agentAddress={agentAddress} />;
+    case "rebalance": return <Rebalance agentAddress={agentAddress} />;
+    case "agent":     return <Agent     agentAddress={agentAddress} />;
+    case "tokens":    return <Tokens    agentAddress={agentAddress} />;
+    case "dex":       return <Dex       agentAddress={agentAddress} />;
+    case "settings":  return <Settings  agentAddress={agentAddress} />;
+    default:          return <Dashboard agentAddress={agentAddress} />;
   }
 }
 
+const BG = { backgroundColor: "rgba(4,5,10,0.94)" } as const;
+const SPINNER = (
+  <span
+    className="h-8 w-8 animate-spin rounded-full border-2"
+    style={{ borderColor: "#5B4FE8", borderTopColor: "transparent" }}
+  />
+);
+
 function AppShell() {
+  const { address } = useAccount();
+  const { agentAddress, hasAgent, isLoading, deployAgent, deployPending, deployConfirming, deploySuccess } =
+    useUserAgent(address);
+
   const searchParams = useSearchParams();
   const router = useRouter();
   const rawTab = searchParams?.get("tab") ?? "dashboard";
   const activeTab = (TABS.find((t) => t.id === rawTab)?.id ?? "dashboard") as TabId;
+  const setTab = (id: TabId) => router.push(`/app?tab=${id}`, { scroll: false });
 
-  const setTab = (id: TabId) => {
-    router.push(`/app?tab=${id}`, { scroll: false });
-  };
+  // ── Not connected ────────────────────────────────────────────────────────
+  if (!address) {
+    return (
+      <div className="min-h-screen" style={BG}>
+        <Nav variant="app" />
+        <div className="flex min-h-[80vh] items-center justify-center">
+          <div className="text-center">
+            <p className="text-lg font-semibold text-white">Connect your wallet to get started</p>
+            <p className="mt-2 text-sm" style={{ color: "rgba(255,255,255,0.4)" }}>
+              Use the connect button in the top right.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
+  // ── Checking chain state ─────────────────────────────────────────────────
+  if (isLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center" style={BG}>
+        {SPINNER}
+      </div>
+    );
+  }
+
+  // ── No agent yet — onboarding ─────────────────────────────────────────────
+  if (!hasAgent) {
+    return (
+      <div className="min-h-screen" style={BG}>
+        <Nav variant="app" />
+        <DeployAgent
+          deployAgent={deployAgent}
+          deployPending={deployPending}
+          deployConfirming={deployConfirming}
+          deploySuccess={deploySuccess}
+          agentAddress={agentAddress}
+        />
+      </div>
+    );
+  }
+
+  // ── Normal app ────────────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen" style={{ backgroundColor: "rgba(4,5,10,0.94)" }}>
+    <div className="min-h-screen" style={BG}>
       <Nav variant="app" />
 
       {/* Tab strip */}
@@ -100,23 +156,19 @@ function AppShell() {
       {/* Tab body */}
       <div className="mx-auto max-w-7xl px-4 py-6">
         <TabErrorBoundary>
-          <TabContent tab={activeTab} />
+          <TabContent tab={activeTab} agentAddress={agentAddress!} />
         </TabErrorBoundary>
       </div>
     </div>
   );
 }
 
-// Suspense wraps AppShell so useSearchParams() can suspend without breaking the page
 export default function AppPage() {
   return (
     <Suspense
       fallback={
         <div className="flex min-h-screen items-center justify-center">
-          <span
-            className="h-8 w-8 animate-spin rounded-full border-2"
-            style={{ borderColor: "#5B4FE8", borderTopColor: "transparent" }}
-          />
+          {SPINNER}
         </div>
       }
     >

@@ -20,7 +20,7 @@ export type PortfolioValue = {
   loading: boolean;
 };
 
-export function usePortfolioValue(): PortfolioValue {
+export function usePortfolioValue(_agentAddress?: string): PortfolioValue {
   const { address } = useAccount();
   const { ethPrice, btcPrice } = usePrices();
 

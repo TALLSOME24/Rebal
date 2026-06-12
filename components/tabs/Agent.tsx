@@ -5,7 +5,7 @@ import { useAccount, useReadContract, useWriteContract, useWaitForTransactionRec
 import { formatEther, parseEther, parseGwei, type Address } from "viem";
 import { portfolioAgentABI } from "@/lib/abi/portfolioAgentABI";
 import { ritualWalletABI } from "@/lib/abi/ritualWalletABI";
-import { PORTFOLIO_AGENT, RITUAL_WALLET } from "@/lib/constants";
+import { RITUAL_WALLET } from "@/lib/constants";
 import { useAgentState } from "@/hooks/useAgentState";
 import { useTickEvents } from "@/hooks/useTickEvents";
 import { useToast } from "@/components/Toast";
@@ -69,12 +69,12 @@ function SliderField({
   );
 }
 
-export function Agent() {
+export function Agent({ agentAddress }: { agentAddress: Address }) {
   const { address } = useAccount();
   const publicClient = usePublicClient();
   const { data: walletClient } = useWalletClient();
-  const agentState = useAgentState();
-  const { events } = useTickEvents();
+  const agentState = useAgentState(agentAddress);
+  const { events } = useTickEvents(agentAddress);
   const { toast } = useToast();
 
   // Scheduler config
@@ -92,12 +92,12 @@ export function Agent() {
   const [isFunding, setIsFunding] = useState(false);
 
   const { data: contractBalance, refetch: refetchBalance } = useBalance({
-    address: PORTFOLIO_AGENT,
+    address: agentAddress,
     query: { refetchInterval: 12_000 },
   });
 
   const { data: ritualBal } = useReadContract({
-    address: PORTFOLIO_AGENT,
+    address: agentAddress,
     abi: portfolioAgentABI,
     functionName: "contractRitualBalance",
     query: { refetchInterval: 12_000 },
@@ -109,7 +109,7 @@ export function Agent() {
     address: RITUAL_WALLET,
     abi: ritualWalletABI,
     functionName: "lockUntil",
-    args: [PORTFOLIO_AGENT],
+    args: [agentAddress],
     query: { refetchInterval: 12_000 },
   });
 
@@ -141,7 +141,7 @@ export function Agent() {
 
   // owner
   const { data: ownerAddress } = useReadContract({
-    address: PORTFOLIO_AGENT,
+    address: agentAddress,
     abi: portfolioAgentABI,
     functionName: "owner",
   });
@@ -149,7 +149,7 @@ export function Agent() {
   const startScheduler = () => {
     toast("Sending startAutomation…", "pending");
     writeStart({
-      address: PORTFOLIO_AGENT,
+      address: agentAddress,
       abi: portfolioAgentABI,
       functionName: "startAutomation",
       args: [freq, cycles, gasLimit, parseGwei("2"), ttl],
@@ -158,7 +158,7 @@ export function Agent() {
 
   const cancelScheduler = () => {
     toast("Cancelling scheduler…", "pending");
-    writeCancel({ address: PORTFOLIO_AGENT, abi: portfolioAgentABI, functionName: "cancelAutomation" });
+    writeCancel({ address: agentAddress, abi: portfolioAgentABI, functionName: "cancelAutomation" });
   };
 
   const depositFees = () => {
@@ -166,7 +166,7 @@ export function Agent() {
     if (amt <= 0n) return toast("Enter a valid deposit amount", "error");
     toast("Depositing to RitualWallet…", "pending");
     writeDeposit({
-      address: PORTFOLIO_AGENT,
+      address: agentAddress,
       abi: portfolioAgentABI,
       functionName: "depositFeesForCaller",
       args: [BigInt(lockBlocks)],
@@ -181,7 +181,7 @@ export function Agent() {
     setIsFunding(true);
     toast("Sending ETH to agent…", "pending");
     try {
-      const txHash = await walletClient.sendTransaction({ to: PORTFOLIO_AGENT, value: amt });
+      const txHash = await walletClient.sendTransaction({ to: agentAddress, value: amt });
       await publicClient.waitForTransactionReceipt({ hash: txHash });
       await refetchBalance();
       toast("Agent funded ✓", "success");
@@ -202,7 +202,7 @@ export function Agent() {
   const recoverFees = () => {
     toast("Recovering RITUAL…", "pending");
     writeWithdraw({
-      address: PORTFOLIO_AGENT,
+      address: agentAddress,
       abi: portfolioAgentABI,
       functionName: "withdrawFees",
       args: [0n],
@@ -438,7 +438,7 @@ export function Agent() {
             Balance: {contractBalance ? Number(contractBalance.formatted).toFixed(4) : "—"} RITUAL
           </p>
           <p className="mb-3 font-mono text-[10px]" style={{ color: "rgba(255,255,255,0.25)" }}>
-            {PORTFOLIO_AGENT.slice(0, 10)}…
+            {agentAddress.slice(0, 10)}…
           </p>
           <input
             type="number"

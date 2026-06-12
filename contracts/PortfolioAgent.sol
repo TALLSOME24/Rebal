@@ -162,10 +162,10 @@ contract PortfolioAgent {
     }
 
     // ─── Constructor ─────────────────────────────────────────────────────────
-    constructor(address _scheduler) {
-        require(_scheduler == SCHEDULER_CONST, "scheduler addr mismatch");
-        scheduler = IScheduler(_scheduler);
-        owner = msg.sender;
+    constructor(address _owner) {
+        require(_owner != address(0), "owner required");
+        scheduler = IScheduler(SCHEDULER_CONST);
+        owner = _owner;
     }
 
     receive() external payable {}

@@ -3,7 +3,6 @@
 import { useState, useEffect } from "react";
 import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 import { portfolioAgentABI } from "@/lib/abi/portfolioAgentABI";
-import { PORTFOLIO_AGENT } from "@/lib/constants";
 import { useAgentState } from "@/hooks/useAgentState";
 import { useToast } from "@/components/Toast";
 import { fetchLlmExecutor, fetchHttpExecutor } from "@/lib/tee";
@@ -114,9 +113,9 @@ function parseStrategyText(text: string): { weth: number; wbtc: number; usdc: nu
   };
 }
 
-export function Rebalance() {
+export function Rebalance({ agentAddress }: { agentAddress: Address }) {
   const { address } = useAccount();
-  const agentState = useAgentState();
+  const agentState = useAgentState(agentAddress);
   const { toast } = useToast();
 
   const [wethPct, setWethPct] = useState(40);
@@ -192,7 +191,7 @@ export function Rebalance() {
     const usdcBps = Math.round(usdcPct * 100);
     toast("Sending transaction…", "pending");
     writeContract({
-      address: PORTFOLIO_AGENT,
+      address: agentAddress,
       abi: portfolioAgentABI,
       functionName: "registerPortfolio",
       args: [riskMode, wethBps, wbtcBps, usdcBps, executors.llm, executors.http],

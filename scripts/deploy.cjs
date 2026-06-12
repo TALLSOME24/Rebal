@@ -6,8 +6,6 @@
  */
 require("dotenv").config();
 const hre = require("hardhat");
-const SCHEDULER = "0x56e776BAE2DD60664b69Bd5F865F1180ffB7D58B";
-
 async function main() {
   const signers = await hre.ethers.getSigners();
   if (!signers.length) throw new Error('Missing deployer: add PRIVATE_KEY=0x... to .env');
@@ -18,7 +16,8 @@ async function main() {
 
   const PortfolioAgent = await hre.ethers.getContractFactory("PortfolioAgent");
   const nonce = await hre.ethers.provider.getTransactionCount(deployer.address, "latest");
-  const agent = await PortfolioAgent.deploy(SCHEDULER, {
+  // Constructor now takes _owner (deployer address); scheduler is hardcoded inside.
+  const agent = await PortfolioAgent.deploy(deployer.address, {
     nonce: nonce,
     maxFeePerGas: hre.ethers.parseUnits("2", "gwei"),
     maxPriorityFeePerGas: hre.ethers.parseUnits("1", "gwei"),
