@@ -20,8 +20,8 @@ async function main() {
   const nonce = await hre.ethers.provider.getTransactionCount(deployer.address, "latest");
   const agent = await PortfolioAgent.deploy(SCHEDULER, {
     nonce: nonce,
-    maxFeePerGas: hre.ethers.parseUnits("50", "gwei"),
-    maxPriorityFeePerGas: hre.ethers.parseUnits("5", "gwei"),
+    maxFeePerGas: hre.ethers.parseUnits("2", "gwei"),
+    maxPriorityFeePerGas: hre.ethers.parseUnits("1", "gwei"),
   });
   await agent.waitForDeployment();
 

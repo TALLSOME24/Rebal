@@ -19,8 +19,9 @@ pragma solidity ^0.8.24;
 ///   [6] onScheduledTick — require(success) removed from precompile calls and replaced
 ///       with graceful error emission so a failed precompile tick does not silently
 ///       brick the scheduler for all future ticks.
-///   [7] _runLLM convoHistory — passes empty StorageRef tuple ('','','') correctly
-///       as the required 30th field.
+///   [7] _runLLM convoHistory — FIXED in v7: pass ConvoStorageRef("","","") directly,
+///       NOT abi.encode(string(""),string(""),string("")) which produces bytes (double-encoded).
+///       Double-encoding caused "length insufficient 224 require 288" at LLM precompile.
 ///   [8] _runHttpPrices executor — HTTP precompile needs capability-0 executor from
 ///       TEEServiceRegistry, not the LLM executor stored in portfolios[].executor.
 ///       This was the root cause of all ticks being silently dropped by the builder.
@@ -491,7 +492,7 @@ if (p.scheduleId != 0) {
             int256(1000),       // 26: topP (1.0 × 1000)
             "",                 // 27: user
             false,              // 28: piiEnabled
-            abi.encode(string(""), string(""), string("")) // 29: convoHistory ('','','') — no persistent history
+            ConvoStorageRef("", "", "")  // 29: convoHistory as tuple (string,string,string) — NOT abi.encode(bytes)
         );
 
         // FIX [6]: Graceful failure — emit TickFailed instead of reverting.
