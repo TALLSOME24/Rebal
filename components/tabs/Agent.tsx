@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt, useBalance, usePublicClient, useWalletClient } from "wagmi";
-import { formatEther, parseEther, type Address } from "viem";
+import { formatEther, parseEther, parseGwei, type Address } from "viem";
 import { portfolioAgentABI } from "@/lib/abi/portfolioAgentABI";
 import { PORTFOLIO_AGENT, RITUAL_WALLET } from "@/lib/constants";
 import { useAgentState } from "@/hooks/useAgentState";
@@ -80,11 +80,11 @@ export function Agent() {
   const [freq, setFreq] = useState(80);
   const [cycles, setCycles] = useState(12);
   const [gasLimit, setGasLimit] = useState(3000000);
-  const [ttl, setTtl] = useState(300);
+  const [ttl, setTtl] = useState(350);
 
   // Ritual Wallet
-  const [depositAmt, setDepositAmt] = useState("0.4");
-  const [lockBlocks, setLockBlocks] = useState(100);
+  const [depositAmt, setDepositAmt] = useState("0.35");
+  const [lockBlocks, setLockBlocks] = useState(200_000);
 
   // Agent fund
   const [fundAmt, setFundAmt] = useState("0.1");
@@ -117,15 +117,13 @@ export function Agent() {
   const { isSuccess: depositSuccess } = useWaitForTransactionReceipt({ hash: depositHash, query: { enabled: !!depositHash } });
   useEffect(() => { if (depositSuccess) toast("Deposited to RitualWallet ✓", "success"); }, [depositSuccess, toast]);
 
-  const startScheduler = async () => {
-    if (!publicClient) return;
+  const startScheduler = () => {
     toast("Sending startAutomation…", "pending");
-    const gas = await publicClient.getGasPrice();
     writeStart({
       address: PORTFOLIO_AGENT,
       abi: portfolioAgentABI,
       functionName: "startAutomation",
-      args: [freq, cycles, gasLimit, gas, ttl],
+      args: [freq, cycles, gasLimit, parseGwei("2"), ttl],
     });
   };
 
@@ -271,7 +269,7 @@ export function Agent() {
         <div className="mt-4 flex flex-wrap gap-2">
           <button
             type="button"
-            onClick={() => void startScheduler()}
+            onClick={startScheduler}
             disabled={!address || startPending}
             className="rounded-xl px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-40"
             style={{ backgroundColor: "#5B4FE8" }}
@@ -354,7 +352,20 @@ export function Agent() {
             style={{ backgroundColor: "rgba(255,255,255,0.04)", borderColor: "rgba(255,255,255,0.08)", color: "white" }}
             placeholder="Amount (RITUAL)"
           />
-          <SliderField label="Lock blocks" value={lockBlocks} min={0} max={1000} onChange={setLockBlocks} />
+          <div className="space-y-1">
+            <div className="flex items-center justify-between">
+              <span className="text-xs" style={{ color: "rgba(255,255,255,0.5)" }}>Lock blocks</span>
+            </div>
+            <input
+              type="number"
+              value={lockBlocks}
+              onChange={(e) => setLockBlocks(Number(e.target.value))}
+              min={1000}
+              step={10000}
+              className="w-full rounded-xl border px-3 py-2 text-sm focus:outline-none"
+              style={{ backgroundColor: "rgba(255,255,255,0.04)", borderColor: "rgba(255,255,255,0.08)", color: "white" }}
+            />
+          </div>
           <button
             type="button"
             onClick={depositFees}
