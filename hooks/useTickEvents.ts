@@ -43,6 +43,9 @@ function parseCompletionPayload(payload: Hex | undefined): { headline: string; r
   }
 }
 
+// Ritual chain caps eth_getLogs at 100k blocks — use 50k to stay well within the limit.
+const LOOKBACK_BLOCKS = 50_000n;
+
 export function useTickEvents(agentAddress: Address | undefined): { events: TickEvent[]; refresh: () => void; loading: boolean } {
   const { address } = useAccount();
   const publicClient = usePublicClient();
@@ -50,18 +53,25 @@ export function useTickEvents(agentAddress: Address | undefined): { events: Tick
   const [loading, setLoading] = useState(false);
 
   const fetch = useCallback(async () => {
-    if (!publicClient || !address || !agentAddress) return;
+    // agentAddress is the only hard requirement — events load even before wallet connects.
+    if (!publicClient || !agentAddress) return;
     setLoading(true);
     try {
       const latest = await publicClient.getBlockNumber();
-      const from = latest > 10000n ? latest - 10000n : 0n;
+      const from = latest > LOOKBACK_BLOCKS ? latest - LOOKBACK_BLOCKS : 0n;
+
+      // For a personal agent contract every event belongs to the owner.
+      // When the wallet is connected we add an indexed owner filter for efficiency;
+      // if not yet connected we fetch all events on the contract (same result for a
+      // personal agent, just slightly more data to decode client-side).
+      const ownerFilter = address ? { owner: address as Address } : undefined;
 
       const [decisions, failures] = await Promise.all([
         publicClient.getContractEvents({
           address: agentAddress,
           abi: portfolioAgentABI,
           eventName: "RebalanceDecision",
-          args: { owner: address as Address },
+          args: ownerFilter,
           fromBlock: from,
           toBlock: latest,
         }),
@@ -69,7 +79,7 @@ export function useTickEvents(agentAddress: Address | undefined): { events: Tick
           address: agentAddress,
           abi: portfolioAgentABI,
           eventName: "TickFailed",
-          args: { owner: address as Address },
+          args: ownerFilter,
           fromBlock: from,
           toBlock: latest,
         }),
