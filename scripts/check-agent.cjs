@@ -7,7 +7,7 @@ const { createPublicClient, http, formatEther } = require("viem");
 const { privateKeyToAccount } = require("viem/accounts");
 
 const RITUAL_RPC = process.env.RITUAL_RPC_URL || "https://rpc.ritualfoundation.org";
-const AGENT    = "0xee71797530a584E9391F8E97E9BA6E91DBAe3c5e"; // v8
+const AGENT    = "0xc94Fcf97F441Ae6a693b8D2C7794778AEeA06Ea6"; // v9
 const WALLET   = "0x532F0dF0896F353d8C3DD8cc134e8129DA2a3948";
 const SCHED    = "0x56e776BAE2DD60664b69Bd5F865F1180ffB7D58B";
 const TEE_REG  = "0x9644e8562cE0Fe12b4deeC4163c064A8862Bf47F";
@@ -249,12 +249,12 @@ async function main() {
   // ── Summary ───────────────────────────────────────────────────────────────
   sep("SUMMARY");
   const issues = [];
-  if (!p || !p.registered)            issues.push("Portfolio not registered");
-  if (rwBal != null && rwBal === 0n)  issues.push("RitualWallet balance = 0 RITUAL — ticks will be silently dropped");
-  if (rwLock != null && rwLock < block) issues.push("RitualWallet lock expired — startAutomation will revert");
-  if (!schedId || schedId === 0n)     issues.push("No active schedule — automation not started");
+  // Use p._norm which normalises both named-field and indexed-array viem responses
+  if (!p || !p._norm?.registered)         issues.push("Portfolio not registered");
+  if (rwBal != null && rwBal === 0n)       issues.push("RitualWallet balance = 0 RITUAL — ticks will be silently dropped");
+  if (rwLock != null && rwLock < block)    issues.push("RitualWallet lock expired — startAutomation will revert");
+  if (!p?._norm?.scheduleId || p._norm.scheduleId === 0n) issues.push("No active schedule — automation not started");
   if (p?._norm?.executor === "0x0000000000000000000000000000000000000000") issues.push("executor = address(0) — registerPortfolio required");
-  if (schedId != null && schedId === 0n) issues.push("scheduleId = 0 — startAutomation not called");
 
   if (issues.length === 0) {
     console.log("  No obvious issues found — check for TickFailed events on-chain");

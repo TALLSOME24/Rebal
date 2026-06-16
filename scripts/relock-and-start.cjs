@@ -19,7 +19,7 @@ const {
 const { privateKeyToAccount } = require("viem/accounts");
 
 const RITUAL_RPC = process.env.RITUAL_RPC_URL || "https://rpc.ritualfoundation.org";
-const AGENT  = "0xee71797530a584E9391F8E97E9BA6E91DBAe3c5e"; // v8
+const AGENT  = "0xc94Fcf97F441Ae6a693b8D2C7794778AEeA06Ea6"; // v9
 const WALLET = "0x532F0dF0896F353d8C3DD8cc134e8129DA2a3948";
 
 const PK = process.env.PRIVATE_KEY;
@@ -104,7 +104,7 @@ const DEPOSIT   = parseEther("0.35"); // top up + lock
 async function main() {
   const block = await pub.getBlockNumber();
   console.log("═".repeat(58));
-  console.log("  relock-and-start  —  PortfolioAgent v6");
+  console.log("  relock-and-start  —  PortfolioAgent v9");
   console.log("═".repeat(58));
   console.log("  agent  :", AGENT);
   console.log("  owner  :", account.address);
