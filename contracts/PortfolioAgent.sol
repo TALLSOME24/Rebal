@@ -1,23 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-/// @title PortfolioAgent v9 — on-chain rebalancing with Rebal DEX integration
-/// @notice Uses HTTP 0x0801 for live quotes, LLM 0x0802 for reasoning.
-///         Alternating ticks: even = HTTP prices, odd = LLM reasoning.
-///         v9: DEX router wired; _doRebalance executes swaps on LLM tick.
+/// @title PortfolioAgent v10 — Sovereign Agent (0x080C) single-tick architecture
+/// @notice One scheduled tick submits a ZeroClaw job that fetches prices + reasons
+///         about drift in one TEE execution. The AsyncDelivery callback receives the
+///         JSON decision and gates _doRebalance on "action":"swap".
 ///
-/// FIXES applied:
-///   [1] tickIndex mapping — per-user counter (scheduler always sends index 0)
-///   [2] HTTP abi.encode — exact 13-field layout
-///   [3] LLM abi.encode — exact 30-field layout with convoHistory tuple
-///   [4] Gas — 3_000_000 minimum for LLM ticks
-///   [5] TTL — 300 block minimum for GLM-4.7-FP8
-///   [6] onScheduledTick — graceful error emission (no require(success))
-///   [7] _runLLM convoHistory — ConvoStorageRef("","","") directly, not double-encoded
-///   [8] _runHttpPrices — uses httpExecutor (capability-0) stored at registration
-///   [9] withdrawFees(uint256) — withdraw RitualWallet balance after lock expires
-///  [10] withdrawToken / withdrawAll — recover any ERC20 from agent contract
-///  [11] dexRouter — Rebal DEX router; auto-rebalance on each LLM tick
+/// Replaces the HTTP+LLM two-tick model (v9) with a single async tick:
+///   onScheduledTick → _callSovereignAgent → 0x080C
+///   AsyncDelivery → onSovereignAgentResult → _doRebalance (if swap)
 
 // ─── Interfaces ───────────────────────────────────────────────────────────────
 
@@ -67,23 +58,24 @@ interface IUniswapV2Router {
     ) external view returns (uint256[] memory amounts);
 }
 
-/// @dev StorageRef tuple for LLM convoHistory field (field 30).
-struct ConvoStorageRef {
+/// @dev Tuple type for 0x080C convoHistory / output / skills / systemPrompt fields.
+struct StorageRef {
     string platform;
     string path;
-    string creds;
+    string keyRef;
 }
 
 // ─── Contract ─────────────────────────────────────────────────────────────────
 
 contract PortfolioAgent {
-    // ─── Precompile addresses ────────────────────────────────────────────────
-    address public constant HTTP_PRECOMPILE = 0x0000000000000000000000000000000000000801;
-    address public constant LLM_PRECOMPILE  = 0x0000000000000000000000000000000000000802;
-
-    // ─── System contract addresses ───────────────────────────────────────────
+    // ─── Precompile / system addresses ──────────────────────────────────────
+    address public constant SOVEREIGN_AGENT = 0x000000000000000000000000000000000000080C;
+    address public constant ASYNC_DELIVERY  = 0x5A16214fF555848411544b005f7Ac063742f39F6;
     address public constant RITUAL_WALLET   = 0x532F0dF0896F353d8C3DD8cc134e8129DA2a3948;
     address public constant SCHEDULER_CONST = 0x56e776BAE2DD60664b69Bd5F865F1180ffB7D58B;
+
+    // keccak256("onSovereignAgentResult(bytes32,bytes)")[0:4]
+    bytes4  public constant DELIVERY_SELECTOR = 0x8ca12055;
 
     // ─── Portfolio token addresses (Ritual Chain mock ERC20s) ────────────────
     address public constant WETH_TOKEN = 0xF42c8B335EE1ee9eD84109C68C238E50E0EE27EC;
@@ -94,7 +86,6 @@ contract PortfolioAgent {
     IScheduler public immutable scheduler;
     address    public immutable owner;
 
-    /// @notice Rebal DEX router — set at construction, updatable by owner.
     address public dexRouter;
 
     uint32 public constant MIN_TTL_BLOCKS = 300;
@@ -108,37 +99,30 @@ contract PortfolioAgent {
         uint16 ethBps;
         uint16 wbtcBps;
         uint16 usdcBps;
-        address executor;
+        address executor;    // sovereign agent executor (TEEServiceRegistry cap=0)
         uint256 scheduleId;
-        address httpExecutor;
     }
 
     // ─── Storage ─────────────────────────────────────────────────────────────
-    mapping(address => Portfolio)  public  portfolios;
-    mapping(address => bytes)      internal _lastPricesBody;
-    mapping(address => uint256)    public  lastCycleId;
-    mapping(address => uint256)    public  tickIndex;
-
-    // ─── Constants ───────────────────────────────────────────────────────────
-    string public constant COINGECKO_URL =
-        "https://api.coingecko.com/api/v3/simple/price?ids=ethereum,bitcoin,usd-coin&vs_currencies=usd";
-    string public constant MODEL = "zai-org/GLM-4.7-FP8";
+    mapping(address => Portfolio) public  portfolios;
+    mapping(address => bytes)     internal _encryptedSecrets; // ECIES blob per owner
+    mapping(address => bytes32)   public  pendingJobId;       // in-flight job per owner
+    mapping(bytes32  => address)  public  jobOwner;           // reverse lookup for callback
+    mapping(address => uint256)   public  lastCycleId;        // incremented on each result
 
     // ─── Events ──────────────────────────────────────────────────────────────
     event PortfolioRegistered(address indexed owner, RiskMode risk, uint16 ethBps, uint16 wbtcBps, uint16 usdcBps);
     event FeesDepositFor(address indexed user, uint256 amountWei);
     event AutomationScheduled(address indexed owner, uint256 indexed callId, uint32 frequency, uint32 numCalls);
     event AutomationCancelled(address indexed owner, uint256 indexed callId);
-    event PricesSnapshot(address indexed owner, uint256 indexed tickIdx, uint256 indexed cycleId, uint16 statusCode, bytes body);
-    event RebalanceDecision(
+    event AutomationTriggered(address indexed owner, bytes32 indexed jobId);
+    event SovereignAgentResult(
         address indexed owner,
-        uint256 indexed cycleId,
-        uint256 indexed tickIdx,
-        bool llmHasError,
-        bytes completionPayload,
-        string errorMessage,
-        bytes32 pricesHash,
-        RiskMode riskMode
+        bytes32 indexed jobId,
+        uint256 cycleId,
+        bool    hasError,
+        string  textResponse,
+        string  errorMessage
     );
     event SwapExecuted(
         address indexed portfolioOwner,
@@ -180,16 +164,12 @@ contract PortfolioAgent {
 
     // ─── Token custody: deposit / withdraw ───────────────────────────────────
 
-    /// @notice Deposit ERC20 tokens into the agent contract for auto-rebalancing.
-    ///         Caller must approve this contract first.
     function depositToken(address token, uint256 amount) external {
         require(amount > 0, "amount required");
         require(IERC20(token).transferFrom(msg.sender, address(this), amount), "transfer failed");
         emit TokenDeposited(token, msg.sender, amount);
     }
 
-    /// @notice Withdraw any ERC20 token from the agent contract to the owner.
-    ///         Pass 0 to withdraw the full balance.
     function withdrawToken(address token, uint256 amount) external onlyOwner {
         uint256 bal = IERC20(token).balanceOf(address(this));
         uint256 amt = amount == 0 ? bal : amount;
@@ -198,7 +178,6 @@ contract PortfolioAgent {
         emit TokenWithdrawn(token, owner, amt);
     }
 
-    /// @notice Withdraw the entire balance of a token to the owner.
     function withdrawAll(address token) external onlyOwner {
         uint256 bal = IERC20(token).balanceOf(address(this));
         require(bal > 0, "nothing to withdraw");
@@ -222,8 +201,6 @@ contract PortfolioAgent {
         emit FeesDepositFor(msg.sender, msg.value);
     }
 
-    /// @notice Withdraw RITUAL from this contract's RitualWallet balance to the owner.
-    ///         Lock must have expired. Pass 0 to withdraw full balance.
     function withdrawFees(uint256 amount) external onlyOwner {
         uint256 bal = IRitualWallet(RITUAL_WALLET).balanceOf(address(this));
         require(bal > 0, "nothing to withdraw");
@@ -233,7 +210,6 @@ contract PortfolioAgent {
         require(ok, "transfer failed");
     }
 
-    /// @notice Alias for withdrawFees with explicit naming.
     function withdrawRitualFees(uint256 amount) external onlyOwner {
         uint256 bal = IRitualWallet(RITUAL_WALLET).balanceOf(address(this));
         require(bal > 0, "nothing to withdraw");
@@ -243,7 +219,6 @@ contract PortfolioAgent {
         require(ok, "transfer failed");
     }
 
-    /// @notice Withdraw the full RitualWallet balance to the owner in one call.
     function withdrawAllRitualFees() external onlyOwner {
         uint256 bal = IRitualWallet(RITUAL_WALLET).balanceOf(address(this));
         require(bal > 0, "nothing to withdraw");
@@ -254,35 +229,44 @@ contract PortfolioAgent {
 
     // ─── Portfolio management ─────────────────────────────────────────────────
 
+    /// @notice Register or update your portfolio.
+    /// @param encryptedSecrets_ ECIES-encrypted JSON secrets (nonce=12).
+    ///        Encrypt {"LLM_PROVIDER":"ritual"} to the executor's publicKey from
+    ///        TEEServiceRegistry. Use ethers-ecies or equivalent with nonce length 12.
     function registerPortfolio(
         RiskMode risk,
         uint16 ethBps_,
         uint16 wbtcBps_,
         uint16 usdcBps_,
         address executor,
-        address httpExecutor_
+        bytes calldata encryptedSecrets_
     ) external {
         require(ethBps_ + wbtcBps_ + usdcBps_ <= 10_000, "bps overflow");
         require(executor != address(0), "executor required");
-        require(httpExecutor_ != address(0), "httpExecutor required");
+        require(encryptedSecrets_.length > 0, "encryptedSecrets required");
 
         Portfolio storage p = portfolios[msg.sender];
-        p.registered   = true;
-        p.riskMode     = risk;
-        p.ethBps       = ethBps_;
-        p.wbtcBps      = wbtcBps_;
-        p.usdcBps      = usdcBps_;
-        p.executor     = executor;
-        p.httpExecutor = httpExecutor_;
+        p.registered  = true;
+        p.riskMode    = risk;
+        p.ethBps      = ethBps_;
+        p.wbtcBps     = wbtcBps_;
+        p.usdcBps     = usdcBps_;
+        p.executor    = executor;
+
+        _encryptedSecrets[msg.sender] = encryptedSecrets_;
 
         emit PortfolioRegistered(msg.sender, risk, ethBps_, wbtcBps_, usdcBps_);
+    }
+
+    function encryptedSecretsOf(address user) external view returns (bytes memory) {
+        return _encryptedSecrets[user];
     }
 
     // ─── Automation ───────────────────────────────────────────────────────────
 
     function startAutomation(
         uint32 frequencyBlocks,
-        uint32 numCycles,
+        uint32 numCalls,
         uint32 gasLimit,
         uint256 maxFeePerGas,
         uint32 schedulerTtl
@@ -290,11 +274,10 @@ contract PortfolioAgent {
         Portfolio storage p = portfolios[msg.sender];
         require(p.registered,             "portfolio not registered");
         require(p.executor != address(0), "executor not set");
-        require(numCycles >= 1,           "need at least 1 cycle");
+        require(numCalls >= 1,            "need at least 1 call");
         require(gasLimit >= 3_000_000,    "gasLimit too low: min 3_000_000");
         require(schedulerTtl >= MIN_TTL_BLOCKS, "ttl too low: min 300 blocks");
 
-        uint32 totalRuns = numCycles * 2;
         uint256 maxCostPerExecution = uint256(gasLimit) * maxFeePerGas;
         require(
             IRitualWallet(RITUAL_WALLET).balanceOf(address(this)) >= maxCostPerExecution,
@@ -312,15 +295,13 @@ contract PortfolioAgent {
             p.scheduleId = 0;
         }
 
-        tickIndex[msg.sender] = 0;
-
         bytes memory data = abi.encodeCall(this.onScheduledTick, (uint256(0), msg.sender));
 
         uint256 callId = scheduler.schedule(
             data,
             gasLimit,
             uint32(block.number + frequencyBlocks),
-            totalRuns,
+            numCalls,
             frequencyBlocks,
             schedulerTtl,
             maxFeePerGas,
@@ -330,7 +311,7 @@ contract PortfolioAgent {
         );
 
         p.scheduleId = callId;
-        emit AutomationScheduled(msg.sender, callId, frequencyBlocks, totalRuns);
+        emit AutomationScheduled(msg.sender, callId, frequencyBlocks, numCalls);
     }
 
     function cancelAutomation() external {
@@ -341,192 +322,190 @@ contract PortfolioAgent {
         p.scheduleId = 0;
     }
 
-    function lastPricesBody(address owner_) external view returns (bytes memory) {
-        return _lastPricesBody[owner_];
-    }
-
     // ─── Scheduler callback ───────────────────────────────────────────────────
 
     function onScheduledTick(
         uint256, /* executionIndex — ignored */
         address portfolioOwner
     ) external onlyScheduler {
+        // Skip if a sovereign agent job is already outstanding for this owner.
+        if (pendingJobId[portfolioOwner] != bytes32(0)) {
+            emit TickFailed(portfolioOwner, lastCycleId[portfolioOwner], "SOVEREIGN", "job already in flight");
+            return;
+        }
+
         Portfolio storage p = portfolios[portfolioOwner];
         require(p.registered && p.executor != address(0), "portfolio not found");
 
-        uint256 idx = tickIndex[portfolioOwner];
-        tickIndex[portfolioOwner] = idx + 1;
+        bytes32 jobId = _callSovereignAgent(portfolioOwner, p);
+        if (jobId == bytes32(0)) return; // _callSovereignAgent already emitted TickFailed
 
-        if (idx % 2 == 0) {
-            _runHttpPrices(idx, portfolioOwner);
-        } else {
-            _runLLM(idx, portfolioOwner);
-        }
+        pendingJobId[portfolioOwner] = jobId;
+        jobOwner[jobId]             = portfolioOwner;
+        emit AutomationTriggered(portfolioOwner, jobId);
     }
 
-    // ─── HTTP tick ────────────────────────────────────────────────────────────
+    // ─── AsyncDelivery callback ───────────────────────────────────────────────
 
-    function _runHttpPrices(uint256 tickIdx, address portfolioOwner) internal {
-        address httpExecutor = portfolios[portfolioOwner].httpExecutor;
-        if (httpExecutor == address(0)) {
-            emit TickFailed(portfolioOwner, tickIdx, "HTTP", "httpExecutor not set");
-            return;
-        }
+    /// @notice Called by AsyncDelivery (0x5A16…) when the sovereign agent job completes.
+    ///         selector = keccak256("onSovereignAgentResult(bytes32,bytes)")[0:4] = 0x8ca12055
+    function onSovereignAgentResult(bytes32 jobId, bytes calldata result) external {
+        require(msg.sender == ASYNC_DELIVERY, "unauthorized callback");
 
-        bytes memory encoded = abi.encode(
-            httpExecutor,
-            new bytes[](0),
-            uint256(300),
-            new bytes[](0),
-            bytes(""),
-            COINGECKO_URL,
-            uint8(1),
-            new string[](0),
-            new string[](0),
-            bytes(""),
-            uint256(0),
-            uint8(0),
-            false
-        );
+        address portfolioOwner = jobOwner[jobId];
+        require(portfolioOwner != address(0), "unknown jobId");
 
-        (bool success, bytes memory result) = HTTP_PRECOMPILE.call(encoded);
+        // Clear pending state before any external calls.
+        delete pendingJobId[portfolioOwner];
+        delete jobOwner[jobId];
 
-        if (!success) {
-            emit TickFailed(portfolioOwner, tickIdx, "HTTP", "precompile call failed");
-            return;
-        }
-
-        if (result.length < 64) {
-            emit PricesSnapshot(portfolioOwner, tickIdx, tickIdx / 2, 0, bytes("pending"));
-            return;
-        }
-
-        (, bytes memory actualOutput) = abi.decode(result, (bytes, bytes));
-
-        if (actualOutput.length == 0) {
-            emit PricesSnapshot(portfolioOwner, tickIdx, tickIdx / 2, 0, bytes("pending"));
-            return;
-        }
-
-        (
-            uint16 status,
-            ,
-            ,
-            bytes memory body,
-            string memory transportErr
-        ) = abi.decode(actualOutput, (uint16, string[], string[], bytes, string));
-
-        if (bytes(transportErr).length > 0) {
-            _lastPricesBody[portfolioOwner] = bytes("");
-            emit TickFailed(portfolioOwner, tickIdx, "HTTP", transportErr);
-            return;
-        }
-
-        _lastPricesBody[portfolioOwner] = body;
-        emit PricesSnapshot(portfolioOwner, tickIdx, tickIdx / 2, status, body);
-    }
-
-    // ─── LLM tick ─────────────────────────────────────────────────────────────
-
-    function _runLLM(uint256 tickIdx, address portfolioOwner) internal {
-        Portfolio storage p = portfolios[portfolioOwner];
-        bytes memory pricesBody = _lastPricesBody[portfolioOwner];
-        bytes32 pricesHash = keccak256(pricesBody);
-
-        bytes memory messagesJson = _encodeMessages(portfolioOwner, p, pricesBody);
-
-        bytes memory encoded = abi.encode(
-            p.executor,
-            new bytes[](0),
-            uint256(300),
-            new bytes[](0),
-            bytes(""),
-            string(messagesJson),
-            MODEL,
-            int256(0),
-            "",
-            false,
-            int256(4096),
-            "",
-            "",
-            uint256(1),
-            true,
-            int256(0),
-            "medium",
-            bytes(""),
-            int256(-1),
-            "auto",
-            "",
-            false,
-            _temperatureForRisk(p.riskMode),
-            bytes(""),
-            bytes(""),
-            int256(-1),
-            int256(1000),
-            "",
-            false,
-            ConvoStorageRef("", "", "")
-        );
-
-        (bool success, bytes memory result) = LLM_PRECOMPILE.call(encoded);
-
-        if (!success) {
-            emit TickFailed(portfolioOwner, tickIdx, "LLM", "precompile call failed");
-            return;
-        }
-
-        if (result.length < 64) {
-            emit RebalanceDecision(portfolioOwner, tickIdx / 2, tickIdx, true, bytes(""), "pending commitment", pricesHash, p.riskMode);
-            return;
-        }
-
-        (, bytes memory actualOutput) = abi.decode(result, (bytes, bytes));
-
-        if (actualOutput.length == 0) {
-            emit RebalanceDecision(portfolioOwner, tickIdx / 2, tickIdx, true, bytes(""), "pending settlement", pricesHash, p.riskMode);
-            return;
-        }
-
-        bool hasErr;
-        bytes memory completion;
+        // Decode the 6-tuple returned by AsyncDelivery.
+        bool success;
         string memory errorMsg;
-
-        (hasErr, completion, , errorMsg, ) = abi.decode(
-            actualOutput,
-            (bool, bytes, bytes, string, ConvoStorageRef)
-        );
-
-        uint256 cycleId = tickIdx / 2;
-        lastCycleId[portfolioOwner] = cycleId;
-
-        emit RebalanceDecision(
-            portfolioOwner, cycleId, tickIdx,
-            hasErr, completion, errorMsg,
-            pricesHash, p.riskMode
-        );
-
-        // [11] Auto-rebalance: if LLM succeeded and DEX router is configured,
-        //      compare actual allocations to target and execute the largest needed swap.
-        if (!hasErr && dexRouter != address(0)) {
-            _doRebalance(portfolioOwner, p);
+        string memory textResponse;
+        {
+            StorageRef memory _c;
+            StorageRef memory _o;
+            StorageRef[] memory _a;
+            (success, errorMsg, textResponse, _c, _o, _a) = abi.decode(
+                result,
+                (bool, string, string, StorageRef, StorageRef, StorageRef[])
+            );
         }
+
+        uint256 cycleId = lastCycleId[portfolioOwner];
+        lastCycleId[portfolioOwner] = cycleId + 1;
+
+        emit SovereignAgentResult(portfolioOwner, jobId, cycleId, !success, textResponse, errorMsg);
+
+        if (!success) {
+            emit TickFailed(portfolioOwner, cycleId, "SOVEREIGN", errorMsg);
+            return;
+        }
+
+        // Gate rebalance on the agent's explicit "swap" decision.
+        if (dexRouter != address(0) && _isSwapAction(textResponse)) {
+            _doRebalance(portfolioOwner, portfolios[portfolioOwner]);
+        }
+    }
+
+    // ─── Sovereign agent call ─────────────────────────────────────────────────
+
+    function _callSovereignAgent(
+        address portfolioOwner,
+        Portfolio storage p
+    ) internal returns (bytes32) {
+        string  memory prompt = _buildPrompt(portfolioOwner, p);
+        bytes   memory secrets = _encryptedSecrets[portfolioOwner];
+
+        StorageRef    memory emptyRef   = StorageRef("", "", "");
+        StorageRef[]  memory emptySkills = new StorageRef[](0);
+        string[]      memory emptyTools  = new string[](0);
+
+        bytes memory encoded = abi.encode(
+            p.executor,                            // 0:  executor (address)
+            uint256(500),                          // 1:  ttl (uint256) — Ritual max
+            bytes(""),                             // 2:  userPublicKey (bytes) — empty = plaintext
+            uint64(5),                             // 3:  pollIntervalBlocks (uint64)
+            uint64(block.number + 6000),           // 4:  maxPollBlock (uint64)
+            "SOVEREIGN_AGENT_TASK",                // 5:  taskIdMarker (string)
+            address(this),                         // 6:  deliveryTarget (address)
+            DELIVERY_SELECTOR,                     // 7:  deliverySelector (bytes4)
+            uint256(3_000_000),                    // 8:  deliveryGasLimit (uint256)
+            uint256(1_000_000_000),                // 9:  deliveryMaxFeePerGas (1 gwei)
+            uint256(100_000_000),                  // 10: deliveryMaxPriorityFeePerGas
+            uint16(6),                             // 11: cliType — 6=ZeroClaw
+            prompt,                                // 12: prompt (string)
+            secrets,                               // 13: encryptedSecrets (bytes)
+            emptyRef,                              // 14: convoHistory (StorageRef)
+            emptyRef,                              // 15: output (StorageRef)
+            emptySkills,                           // 16: skills (StorageRef[])
+            emptyRef,                              // 17: systemPrompt (StorageRef)
+            "zai-org/GLM-4.7-FP8",                // 18: model (string)
+            emptyTools,                            // 19: tools (string[]) — [] = all
+            uint16(50),                            // 20: maxTurns (uint16)
+            uint32(8192),                          // 21: maxTokens (uint32)
+            '["https://rpc.ritualfoundation.org"]' // 22: rpcUrls (string)
+        );
+
+        (bool ok, bytes memory ret) = SOVEREIGN_AGENT.call(encoded);
+        if (!ok) {
+            emit TickFailed(portfolioOwner, lastCycleId[portfolioOwner], "SOVEREIGN", "0x080C call failed");
+            return bytes32(0);
+        }
+
+        if (ret.length < 32) {
+            emit TickFailed(portfolioOwner, lastCycleId[portfolioOwner], "SOVEREIGN", "no jobId in return data");
+            return bytes32(0);
+        }
+
+        return abi.decode(ret, (bytes32));
+    }
+
+    // ─── Prompt builder ───────────────────────────────────────────────────────
+
+    function _buildPrompt(
+        address portfolioOwner,
+        Portfolio storage p
+    ) internal view returns (string memory) {
+        uint16 usdtBps = uint16(10000 - uint256(p.ethBps) - uint256(p.wbtcBps) - uint256(p.usdcBps));
+
+        return string(abi.encodePacked(
+            "You are a portfolio rebalancing agent running inside a Ritual TEE.\n"
+            "Owner: ", _addrToAscii(portfolioOwner), "\n\n"
+            "STEP 1 - Fetch current prices:\n"
+            "GET https://api.coingecko.com/api/v3/simple/price"
+            "?ids=ethereum,bitcoin,usd-coin&vs_currencies=usd\n\n"
+            "STEP 2 - Target allocations (basis points, 10000=100%):\n"
+            "  WETH: ", uint2dec(p.ethBps),  " bps\n"
+            "  WBTC: ", uint2dec(p.wbtcBps), " bps\n"
+            "  USDC: ", uint2dec(p.usdcBps), " bps\n"
+            "  USDT: ", uint2dec(usdtBps),   " bps\n"
+            "  Risk mode: ", _riskName(p.riskMode), "\n\n"
+            "STEP 3 - Decision rules:\n"
+            "- If any asset drifts >200 bps from target: recommend ONE swap.\n"
+            "- Conservative: prefer smaller corrections. Aggressive: larger steps.\n"
+            "- If no asset drifts >200 bps: hold.\n\n"
+            "OUTPUT - Respond with ONLY one of these two JSON objects, nothing else:\n"
+            "{\"action\":\"hold\",\"reason\":\"<explanation>\",\"confidence\":<0.0-1.0>}\n"
+            "{\"action\":\"swap\",\"fromToken\":\"<WETH|WBTC|USDC|USDT>\","
+            "\"toToken\":\"<WETH|WBTC|USDC|USDT>\",\"amountBps\":<0-10000>,"
+            "\"reason\":\"<explanation>\",\"confidence\":<0.0-1.0>}\n"
+            "No markdown. No code blocks. No text before or after the JSON."
+        ));
+    }
+
+    // ─── Action parser ────────────────────────────────────────────────────────
+
+    function _isSwapAction(string memory text) internal pure returns (bool) {
+        bytes memory b = bytes(text);
+        return _bytesContains(b, bytes('"action":"swap"'))
+            || _bytesContains(b, bytes('"action": "swap"'));
+    }
+
+    function _bytesContains(bytes memory haystack, bytes memory needle) internal pure returns (bool) {
+        if (needle.length > haystack.length) return false;
+        uint256 limit = haystack.length - needle.length;
+        for (uint256 i = 0; i <= limit; i++) {
+            bool found = true;
+            for (uint256 j = 0; j < needle.length; j++) {
+                if (haystack[i + j] != needle[j]) { found = false; break; }
+            }
+            if (found) return true;
+        }
+        return false;
     }
 
     // ─── DEX rebalance ────────────────────────────────────────────────────────
 
-    /// @dev Compares actual token balances to target allocation and executes
-    ///      a single swap to correct the largest drift. Uses WETH as the
-    ///      routing hub for non-WETH pairs.
     function _doRebalance(address portfolioOwner, Portfolio storage p) internal {
         uint256 wethBal = IERC20(WETH_TOKEN).balanceOf(address(this));
         uint256 wbtcBal = IERC20(WBTC_TOKEN).balanceOf(address(this));
         uint256 usdcBal = IERC20(USDC_TOKEN).balanceOf(address(this));
         uint256 usdtBal = IERC20(USDT_TOKEN).balanceOf(address(this));
 
-        // Skip if nothing to rebalance
         if (wethBal == 0 && wbtcBal == 0 && usdcBal == 0 && usdtBal == 0) return;
 
-        // Get WETH price in USDC (1 WETH → X USDC, 6 decimals)
         address[] memory path2 = new address[](2);
         path2[0] = WETH_TOKEN;
         path2[1] = USDC_TOKEN;
@@ -535,26 +514,23 @@ contract PortfolioAgent {
             returns (uint256[] memory out) {
             wethPriceUsdc = out[1];
         } catch {
-            emit TickFailed(portfolioOwner, tickIndex[portfolioOwner], "REBAL", "price fetch failed: WETH/USDC");
+            emit TickFailed(portfolioOwner, lastCycleId[portfolioOwner], "REBAL", "price fetch failed: WETH/USDC");
             return;
         }
         if (wethPriceUsdc == 0) return;
 
-        // Get WBTC price in USDC via WETH (1 WBTC → X WETH → X USDC)
         uint256 wbtcPriceUsdc;
         if (wbtcBal > 0) {
             path2[0] = WBTC_TOKEN;
             path2[1] = WETH_TOKEN;
             try IUniswapV2Router(dexRouter).getAmountsOut(1e8, path2)
                 returns (uint256[] memory out) {
-                // out[1] is WETH per 1 WBTC (18 dec); convert to USDC (6 dec)
                 wbtcPriceUsdc = out[1] * wethPriceUsdc / 1e18;
             } catch {
-                wbtcPriceUsdc = wethPriceUsdc * 20; // fallback: 1 WBTC = 20 WETH
+                wbtcPriceUsdc = wethPriceUsdc * 20;
             }
         }
 
-        // Calculate current values in USDC (6 decimals)
         uint256 vWeth = wethBal * wethPriceUsdc / 1e18;
         uint256 vWbtc = wbtcBal > 0 ? wbtcBal * wbtcPriceUsdc / 1e8 : 0;
         uint256 vUsdc = usdcBal;
@@ -563,29 +539,25 @@ contract PortfolioAgent {
         uint256 total = vWeth + vWbtc + vUsdc + vUsdt;
         if (total == 0) return;
 
-        // Target values in USDC
         uint16 usdtBps = uint16(10000 - p.ethBps - p.wbtcBps - p.usdcBps);
         uint256 tWeth = total * p.ethBps  / 10000;
         uint256 tWbtc = total * p.wbtcBps / 10000;
         uint256 tUsdc = total * p.usdcBps / 10000;
         uint256 tUsdt = total * usdtBps   / 10000;
 
-        // Signed drifts (positive = overweight)
         int256 dWeth = int256(vWeth) - int256(tWeth);
         int256 dWbtc = int256(vWbtc) - int256(tWbtc);
         int256 dUsdc = int256(vUsdc) - int256(tUsdc);
         int256 dUsdt = int256(vUsdt) - int256(tUsdt);
 
-        // Find most overweight token (to sell)
         address tokenIn;
-        int256 maxD = int256(1e5); // minimum $0.10 threshold (USDC 6 dec)
+        int256 maxD = int256(1e5);
         if (dWeth > maxD) { maxD = dWeth; tokenIn = WETH_TOKEN; }
         if (dWbtc > maxD) { maxD = dWbtc; tokenIn = WBTC_TOKEN; }
         if (dUsdc > maxD) { maxD = dUsdc; tokenIn = USDC_TOKEN; }
         if (dUsdt > maxD) { maxD = dUsdt; tokenIn = USDT_TOKEN; }
-        if (tokenIn == address(0)) return; // portfolio is balanced
+        if (tokenIn == address(0)) return;
 
-        // Find most underweight token (to buy)
         address tokenOut;
         int256 minD = int256(0);
         if (dWeth < minD) { minD = dWeth; tokenOut = WETH_TOKEN; }
@@ -594,16 +566,13 @@ contract PortfolioAgent {
         if (dUsdt < minD) { minD = dUsdt; tokenOut = USDT_TOKEN; }
         if (tokenOut == address(0) || tokenIn == tokenOut) return;
 
-        // Swap half the excess (conservative; multiple ticks converge)
         uint256 swapValueUsdc = uint256(maxD) / 2;
 
-        // Convert USDC value to tokenIn native amount
         uint256 amountIn;
         if      (tokenIn == WETH_TOKEN) amountIn = swapValueUsdc * 1e18 / wethPriceUsdc;
         else if (tokenIn == WBTC_TOKEN) amountIn = wbtcPriceUsdc > 0 ? swapValueUsdc * 1e8 / wbtcPriceUsdc : 0;
-        else                            amountIn = swapValueUsdc; // USDC or USDT (6 dec)
+        else                            amountIn = swapValueUsdc;
 
-        // Cap at available balance
         uint256 maxBal = tokenIn == WETH_TOKEN ? wethBal
                        : tokenIn == WBTC_TOKEN ? wbtcBal
                        : tokenIn == USDC_TOKEN ? usdcBal
@@ -614,15 +583,12 @@ contract PortfolioAgent {
         _executeSwap(portfolioOwner, tokenIn, tokenOut, amountIn);
     }
 
-    /// @dev Executes a swap via the Rebal DEX router.
-    ///      Uses direct path if one token is WETH, otherwise routes through WETH.
     function _executeSwap(
         address portfolioOwner,
         address tokenIn,
         address tokenOut,
         uint256 amountIn
     ) internal {
-        // Build routing path
         address[] memory path;
         if (tokenIn == WETH_TOKEN || tokenOut == WETH_TOKEN) {
             path = new address[](2);
@@ -639,7 +605,7 @@ contract PortfolioAgent {
 
         try IUniswapV2Router(dexRouter).swapExactTokensForTokens(
             amountIn,
-            0,              // accept any output; allocation logic controls acceptable drift
+            0,
             path,
             address(this),
             block.timestamp + 300_000
@@ -651,54 +617,16 @@ contract PortfolioAgent {
             );
         } catch {
             IERC20(tokenIn).approve(dexRouter, 0);
-            emit TickFailed(portfolioOwner, tickIndex[portfolioOwner], "SWAP", "swap reverted");
+            emit TickFailed(portfolioOwner, lastCycleId[portfolioOwner], "SWAP", "swap reverted");
         }
     }
 
-    // ─── Internal helpers ─────────────────────────────────────────────────────
+    // ─── Internal string/byte helpers ─────────────────────────────────────────
 
-    function _temperatureForRisk(RiskMode r) internal pure returns (int256) {
-        if (r == RiskMode.Conservative) return 200;
-        if (r == RiskMode.Balanced)     return 600;
-        return 950;
-    }
-
-    function _encodeMessages(
-        address owner_,
-        Portfolio storage p,
-        bytes memory priceBody
-    ) internal view returns (bytes memory) {
-        bytes memory hexBody  = _toHex(priceBody);
-        bytes memory riskLine = bytes(_riskInstructions(p.riskMode));
-
-        bytes memory userChunk = abi.encodePacked(
-            "OWNER=", _addrToAscii(owner_),
-            ";TARGET_ETH_BPS=",  uint2dec(p.ethBps),
-            ";TARGET_WBTC_BPS=", uint2dec(p.wbtcBps),
-            ";TARGET_USDC_BPS=", uint2dec(p.usdcBps),
-            ";PRICES_JSON_HEX=", hexBody
-        );
-
-        return abi.encodePacked(
-            '[{"role":"system","content":"',
-            riskLine,
-            ' You MUST reply with a concise JSON-only object with keys:'
-            ' rationale (string <=800 chars); suggested_moves (array of'
-            ' {asset: eth|btc|usdc|usdt, drift_bps: int, note: string}).'
-            ' Decode PRICES_JSON_HEX as UTF-8 JSON to get live prices.'
-            ' No markdown, no explanation outside the JSON."},',
-            '{"role":"user","content":"',
-            userChunk,
-            '"}]'
-        );
-    }
-
-    function _riskInstructions(RiskMode r) internal pure returns (string memory) {
-        if (r == RiskMode.Conservative)
-            return "Risk=CONSERVATIVE. Prefer smaller adjustments; emphasize capital preservation.";
-        if (r == RiskMode.Balanced)
-            return "Risk=BALANCED. Balance drawdown sensitivity with drift correction.";
-        return "Risk=AGGRESSIVE. Allow larger suggested correction steps when drift is material.";
+    function _riskName(RiskMode r) internal pure returns (string memory) {
+        if (r == RiskMode.Conservative) return "Conservative";
+        if (r == RiskMode.Balanced)     return "Balanced";
+        return "Aggressive";
     }
 
     function _addrToAscii(address a) internal pure returns (bytes memory out) {
@@ -719,17 +647,5 @@ contract PortfolioAgent {
         bytes memory buf = new bytes(digits);
         while (v != 0) { digits--; buf[digits] = bytes1(uint8(48 + (v % 10))); v /= 10; }
         return buf;
-    }
-
-    function _toHex(bytes memory data) internal pure returns (bytes memory) {
-        if (data.length == 0) return "0x";
-        bytes16 alphabet = "0123456789abcdef";
-        bytes memory str = new bytes(2 + data.length * 2);
-        str[0] = "0"; str[1] = "x";
-        for (uint256 i = 0; i < data.length; i++) {
-            str[2 + i * 2] = alphabet[uint8(data[i] >> 4)];
-            str[3 + i * 2] = alphabet[uint8(data[i] & 0x0f)];
-        }
-        return str;
     }
 }

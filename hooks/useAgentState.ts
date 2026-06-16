@@ -2,7 +2,7 @@
 
 import { useAccount, useReadContract } from "wagmi";
 import { portfolioAgentABI } from "@/lib/abi/portfolioAgentABI";
-import type { Address } from "viem";
+import type { Address, Hex } from "viem";
 
 export type AgentState = {
   registered: boolean;
@@ -11,9 +11,8 @@ export type AgentState = {
   wbtcBps: number;
   usdcBps: number;
   executor: Address | undefined;
-  httpExecutor: Address | undefined;
   scheduleId: bigint;
-  tickIndex: bigint;
+  pendingJobId: Hex;
   lastCycleId: bigint;
   loading: boolean;
 };
@@ -25,9 +24,8 @@ const DEFAULT: AgentState = {
   wbtcBps: 0,
   usdcBps: 0,
   executor: undefined,
-  httpExecutor: undefined,
   scheduleId: 0n,
-  tickIndex: 0n,
+  pendingJobId: "0x0000000000000000000000000000000000000000000000000000000000000000",
   lastCycleId: 0n,
   loading: false,
 };
@@ -43,12 +41,12 @@ export function useAgentState(agentAddress: Address | undefined): AgentState {
     query: { enabled: !!address && !!agentAddress, refetchInterval: 30_000 },
   });
 
-  const { data: tick } = useReadContract({
+  const { data: pendingJob } = useReadContract({
     address: agentAddress,
     abi: portfolioAgentABI,
-    functionName: "tickIndex",
+    functionName: "pendingJobId",
     args: address ? [address] : undefined,
-    query: { enabled: !!address && !!agentAddress, refetchInterval: 30_000 },
+    query: { enabled: !!address && !!agentAddress, refetchInterval: 15_000 },
   });
 
   const { data: lastCycle } = useReadContract({
@@ -61,7 +59,7 @@ export function useAgentState(agentAddress: Address | undefined): AgentState {
 
   if (!portfolio) return { ...DEFAULT, loading: isLoading };
 
-  const p = portfolio as unknown as readonly [boolean, number, number, number, number, Address, bigint, Address];
+  const p = portfolio as unknown as readonly [boolean, number, number, number, number, Address, bigint];
 
   return {
     registered: p[0],
@@ -71,8 +69,7 @@ export function useAgentState(agentAddress: Address | undefined): AgentState {
     usdcBps: Number(p[4]),
     executor: p[5],
     scheduleId: p[6],
-    httpExecutor: p[7],
-    tickIndex: (tick as bigint | undefined) ?? 0n,
+    pendingJobId: (pendingJob as Hex | undefined) ?? DEFAULT.pendingJobId,
     lastCycleId: (lastCycle as bigint | undefined) ?? 0n,
     loading: isLoading,
   };

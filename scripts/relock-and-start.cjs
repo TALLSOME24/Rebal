@@ -1,9 +1,10 @@
 /**
- * Re-locks the RitualWallet for PortfolioAgent v6, then starts automation.
+ * Re-locks the RitualWallet for PortfolioAgent v10, then starts automation.
  *
- * Why: startAutomation requires lockUntil(address(this)) >= block + TTL.
- * After the previous schedule completes/expires the lock is not auto-renewed,
- * so depositFeesForCaller must be called again before startAutomation.
+ * v10 uses the Sovereign Agent (0x080C) single-tick architecture:
+ *   - frequency: 2000 blocks (~11.7 min at 350ms/block)
+ *   - numCalls:  5  (frequency * numCalls = 10,000 = scheduler MAX_LIFESPAN)
+ *   - ttl:       500 blocks (scheduler hard cap)
  *
  * Run: node scripts/relock-and-start.cjs
  */
@@ -19,7 +20,7 @@ const {
 const { privateKeyToAccount } = require("viem/accounts");
 
 const RITUAL_RPC = process.env.RITUAL_RPC_URL || "https://rpc.ritualfoundation.org";
-const AGENT  = "0xc94Fcf97F441Ae6a693b8D2C7794778AEeA06Ea6"; // v9
+const AGENT  = process.env.AGENT_ADDRESS || "0xc94Fcf97F441Ae6a693b8D2C7794778AEeA06Ea6";
 const WALLET = "0x532F0dF0896F353d8C3DD8cc134e8129DA2a3948";
 
 const PK = process.env.PRIVATE_KEY;
@@ -49,11 +50,11 @@ const agentAbi = [
     type: "function",
     stateMutability: "nonpayable",
     inputs: [
-      { name: "frequencyBlocks", type: "uint32" },
-      { name: "numCycles",       type: "uint32" },
-      { name: "gasLimit",        type: "uint32" },
+      { name: "frequencyBlocks", type: "uint32"  },
+      { name: "numCalls",        type: "uint32"  },
+      { name: "gasLimit",        type: "uint32"  },
       { name: "maxFeePerGas",    type: "uint256" },
-      { name: "schedulerTtl",    type: "uint32" },
+      { name: "schedulerTtl",    type: "uint32"  },
     ],
     outputs: [],
   },
@@ -70,7 +71,6 @@ const agentAbi = [
       { name: "usdcBps",     type: "uint16"  },
       { name: "executor",    type: "address" },
       { name: "scheduleId",  type: "uint256" },
-      { name: "httpExecutor", type: "address" },
     ],
   },
   {
@@ -92,33 +92,34 @@ const walletAbi = [
     inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] },
 ];
 
-// Parameters — must match what startAutomation validates
-const FREQ      = 80;
-const CYCLES    = 12;           // 24 total ticks (HTTP+LLM pairs)
+// v10 Sovereign Agent parameters
+// frequency * numCalls = 2000 * 5 = 10,000 = scheduler MAX_LIFESPAN exactly
+const FREQ      = 2000;         // blocks between ticks (~11.7 min at 350ms/block)
+const NUM_CALLS = 5;            // one sovereign agent job per tick
 const GAS       = 3_000_000;
-const TTL       = 350;
+const TTL       = 500;          // blocks (Ritual scheduler hard cap)
 const MAX_FEE   = parseGwei("30");
 const LOCK_DUR  = 200_000n;     // >> TTL, gives ~20 days of lock on Ritual testnet
-const DEPOSIT   = parseEther("0.35"); // top up + lock
+const DEPOSIT   = parseEther("0.35");
 
 async function main() {
   const block = await pub.getBlockNumber();
-  console.log("═".repeat(58));
-  console.log("  relock-and-start  —  PortfolioAgent v9");
-  console.log("═".repeat(58));
+  console.log("=".repeat(58));
+  console.log("  relock-and-start  --  PortfolioAgent v10");
+  console.log("=".repeat(58));
   console.log("  agent  :", AGENT);
   console.log("  owner  :", account.address);
   console.log("  block  :", block.toString());
 
-  // Pre-flight
+  // Pre-flight checks
   const p = await pub.readContract({ address: AGENT, abi: agentAbi, functionName: "portfolios", args: [account.address] });
   const registered = p.registered ?? p[0];
   const executor   = p.executor   ?? p[5];
-  console.log("\n  registered :", registered ? "YES" : "NO ← ABORT");
-  if (!registered) { console.error("Portfolio not registered."); process.exit(1); }
+  console.log("\n  registered :", registered ? "YES" : "NO <- ABORT");
+  if (!registered) { console.error("Portfolio not registered -- call registerPortfolio first."); process.exit(1); }
   console.log("  executor   :", executor);
   if (!executor || executor === "0x0000000000000000000000000000000000000000") {
-    console.error("executor = address(0) — call registerPortfolio first"); process.exit(1);
+    console.error("executor = address(0) -- call registerPortfolio first"); process.exit(1);
   }
 
   const rwBal  = await pub.readContract({ address: WALLET, abi: walletAbi, functionName: "balanceOf", args: [AGENT] });
@@ -126,8 +127,8 @@ async function main() {
   console.log("\n  RitualWallet balance :", formatEther(rwBal), "RITUAL");
   console.log("  lockUntil            :", rwLock.toString(), rwLock < block ? "(EXPIRED)" : "(valid)");
 
-  // Step 1 — depositFeesForCaller to re-extend lock
-  console.log("\n─".repeat(58));
+  // Step 1 — depositFeesForCaller
+  console.log("\n" + "-".repeat(58));
   console.log("  Step 1: depositFeesForCaller");
   console.log(`    lockDurationBlocks : ${LOCK_DUR.toString()}`);
   console.log(`    value              : ${formatEther(DEPOSIT)} RITUAL`);
@@ -147,26 +148,25 @@ async function main() {
   }
   console.log("  TX:", depositHash);
   const depositReceipt = await pub.waitForTransactionReceipt({ hash: depositHash });
-  console.log("  status:", depositReceipt.status === "success" ? "SUCCESS ✓" : "REVERTED ✗");
+  console.log("  status:", depositReceipt.status === "success" ? "SUCCESS" : "REVERTED");
   if (depositReceipt.status !== "success") { console.error("  Deposit reverted."); process.exit(1); }
 
-  // Verify lock is now valid
   const newLock = await pub.readContract({ address: WALLET, abi: walletAbi, functionName: "lockUntil", args: [AGENT] });
   const newBal  = await pub.readContract({ address: WALLET, abi: walletAbi, functionName: "balanceOf", args: [AGENT] });
-  console.log("  new lockUntil :", newLock.toString(), "(must be ≥", (block + BigInt(TTL)).toString(), ")");
+  console.log("  new lockUntil :", newLock.toString(), "(must be >=", (block + BigInt(TTL)).toString(), ")");
   console.log("  new balance   :", formatEther(newBal), "RITUAL");
   if (newLock < block + BigInt(TTL)) {
-    console.error("  Lock still too short — unexpected."); process.exit(1);
+    console.error("  Lock still too short -- unexpected."); process.exit(1);
   }
 
   // Step 2 — startAutomation
-  console.log("\n─".repeat(58));
-  console.log("  Step 2: startAutomation");
-  console.log(`    frequencyBlocks : ${FREQ}`);
-  console.log(`    numCycles       : ${CYCLES}  (${CYCLES * 2} total ticks)`);
+  console.log("\n" + "-".repeat(58));
+  console.log("  Step 2: startAutomation (v10 Sovereign Agent params)");
+  console.log(`    frequencyBlocks : ${FREQ}  (~${Math.round(FREQ * 350 / 60)} seconds per tick)`);
+  console.log(`    numCalls        : ${NUM_CALLS}  (freq * numCalls = ${FREQ * NUM_CALLS} = MAX_LIFESPAN)`);
   console.log(`    gasLimit        : ${GAS.toLocaleString()}`);
   console.log(`    maxFeePerGas    : ${Number(MAX_FEE) / 1e9} gwei`);
-  console.log(`    schedulerTtl    : ${TTL} blocks`);
+  console.log(`    schedulerTtl    : ${TTL} blocks (Ritual hard cap)`);
 
   let startHash;
   try {
@@ -174,7 +174,7 @@ async function main() {
       address: AGENT,
       abi: agentAbi,
       functionName: "startAutomation",
-      args: [FREQ, CYCLES, GAS, MAX_FEE, TTL],
+      args: [FREQ, NUM_CALLS, GAS, MAX_FEE, TTL],
     });
   } catch (err) {
     console.error("\n  startAutomation FAILED:", err.shortMessage || err.message);
@@ -182,20 +182,22 @@ async function main() {
   }
   console.log("  TX:", startHash);
   const startReceipt = await pub.waitForTransactionReceipt({ hash: startHash });
-  console.log("  status:", startReceipt.status === "success" ? "SUCCESS ✓" : "REVERTED ✗");
+  console.log("  status:", startReceipt.status === "success" ? "SUCCESS" : "REVERTED");
   if (startReceipt.status !== "success") { console.error("  startAutomation reverted."); process.exit(1); }
 
-  // Decode schedule ID from logs
+  // Decode schedule ID from AutomationScheduled log (2 indexed topics after topic[0])
   let newCallId = "unknown";
-  const schedLog = startReceipt.logs.find(l => l.address.toLowerCase() === AGENT.toLowerCase() && l.topics.length === 3);
+  const schedLog = startReceipt.logs.find(
+    l => l.address.toLowerCase() === AGENT.toLowerCase() && l.topics.length === 3
+  );
   if (schedLog) newCallId = BigInt(schedLog.topics[2]).toString();
 
-  console.log("\n" + "═".repeat(58));
+  console.log("\n" + "=".repeat(58));
   console.log("  DONE");
   console.log("  new scheduleId :", newCallId);
   console.log("  first tick fires in ~", FREQ, "blocks (~", Math.round(FREQ * 350 / 60), "seconds)");
   console.log("  Run: node scripts/check-agent.cjs to verify");
-  console.log("═".repeat(58));
+  console.log("=".repeat(58));
 }
 
 main().catch(e => { console.error(e); process.exit(1); });

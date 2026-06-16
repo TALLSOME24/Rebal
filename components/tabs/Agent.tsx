@@ -212,7 +212,7 @@ export function Agent({ agentAddress }: { agentAddress: Address }) {
                 {agentState.registered ? "Active" : "Paused"}
               </span>
               <span className="text-sm" style={{ color: "rgba(255,255,255,0.4)" }}>
-                PortfolioAgent v9 · Ritual Chain 1979
+                PortfolioAgent v10 · Ritual Chain 1979
               </span>
             </div>
 
@@ -220,7 +220,7 @@ export function Agent({ agentAddress }: { agentAddress: Address }) {
             <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
               {[
                 { label: "Ticks Fired", value: String(tickCount) },
-                { label: "Tick Index", value: String(agentState.tickIndex) },
+                { label: "Cycles Done", value: agentState.lastCycleId > 0n ? String(agentState.lastCycleId) : "0" },
                 { label: "Contract Balance", value: contractBalance ? `${Number(contractBalance.formatted).toFixed(4)} RITUAL` : "—" },
                 { label: "Net Profit", value: "$0.00" },
               ].map(({ label, value }) => (

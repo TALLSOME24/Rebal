@@ -2,11 +2,11 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useAccount, usePublicClient } from "wagmi";
-import { hexToString, type Address, type Hex } from "viem";
+import { type Address, type Hex } from "viem";
 import { portfolioAgentABI } from "@/lib/abi/portfolioAgentABI";
 
 export type TickEvent = {
-  type: "decision" | "failed";
+  type: "decision" | "triggered" | "failed";
   headline: string;
   reason: string;
   confidence: number;
@@ -14,37 +14,48 @@ export type TickEvent = {
   protocol: string;
   txHash: Hex;
   cycleId?: bigint;
-  tickIdx?: bigint;
-  llmHasError?: boolean;
+  jobId?: Hex;
+  hasError?: boolean;
   phase?: string;
 };
 
-function parseCompletionPayload(payload: Hex | undefined): { headline: string; reason: string; confidence: number } {
-  if (!payload || payload === "0x") {
-    return { headline: "Awaiting LLM response", reason: "", confidence: 0 };
-  }
-  try {
-    const text = hexToString(payload);
-    const json = JSON.parse(text) as {
-      rationale?: string;
-      suggested_moves?: Array<{ asset: string; drift_bps?: number; note?: string }>;
-    };
-    const moves = json.suggested_moves ?? [];
-    const headline =
-      moves.length === 0
-        ? "Hold — portfolio in range"
-        : `Adjust: ${moves.map((m) => `${m.asset} ${m.drift_bps && m.drift_bps > 0 ? "+" : ""}${m.drift_bps ?? 0}bps`).join(", ")}`;
-    const reason = json.rationale?.slice(0, 200) ?? "";
-    const confidence = moves.length > 0 ? Math.min(95, 60 + moves.length * 5) : 40;
-    return { headline, reason, confidence };
-  } catch {
-    const text = hexToString(payload).slice(0, 200);
-    return { headline: "LLM response received", reason: text, confidence: 50 };
-  }
-}
+const ZERO_JOB = "0x0000000000000000000000000000000000000000000000000000000000000000";
 
 // Ritual chain caps eth_getLogs at 100k blocks — use 50k to stay well within the limit.
 const LOOKBACK_BLOCKS = 50_000n;
+
+function parseTextResponse(text: string): { headline: string; reason: string; confidence: number } {
+  if (!text) return { headline: "No response", reason: "", confidence: 0 };
+  try {
+    const json = JSON.parse(text) as {
+      action?: string;
+      fromToken?: string;
+      toToken?: string;
+      amountBps?: number;
+      reason?: string;
+      confidence?: number;
+    };
+    if (json.action === "swap") {
+      const headline = `Swap ${json.fromToken ?? "?"} → ${json.toToken ?? "?"} (${json.amountBps ?? 0} bps)`;
+      return {
+        headline,
+        reason: json.reason?.slice(0, 200) ?? "",
+        confidence: Math.round((json.confidence ?? 0.7) * 100),
+      };
+    }
+    return {
+      headline: "Hold — portfolio in range",
+      reason: json.reason?.slice(0, 200) ?? "",
+      confidence: Math.round((json.confidence ?? 0.5) * 100),
+    };
+  } catch {
+    return {
+      headline: "Agent response received",
+      reason: text.slice(0, 200),
+      confidence: 50,
+    };
+  }
+}
 
 export function useTickEvents(agentAddress: Address | undefined): { events: TickEvent[]; refresh: () => void; loading: boolean } {
   const { address } = useAccount();
@@ -53,24 +64,26 @@ export function useTickEvents(agentAddress: Address | undefined): { events: Tick
   const [loading, setLoading] = useState(false);
 
   const fetch = useCallback(async () => {
-    // agentAddress is the only hard requirement — events load even before wallet connects.
     if (!publicClient || !agentAddress) return;
     setLoading(true);
     try {
       const latest = await publicClient.getBlockNumber();
       const from = latest > LOOKBACK_BLOCKS ? latest - LOOKBACK_BLOCKS : 0n;
-
-      // For a personal agent contract every event belongs to the owner.
-      // When the wallet is connected we add an indexed owner filter for efficiency;
-      // if not yet connected we fetch all events on the contract (same result for a
-      // personal agent, just slightly more data to decode client-side).
       const ownerFilter = address ? { owner: address as Address } : undefined;
 
-      const [decisions, failures] = await Promise.all([
+      const [results, triggers, failures] = await Promise.all([
         publicClient.getContractEvents({
           address: agentAddress,
           abi: portfolioAgentABI,
-          eventName: "RebalanceDecision",
+          eventName: "SovereignAgentResult",
+          args: ownerFilter,
+          fromBlock: from,
+          toBlock: latest,
+        }),
+        publicClient.getContractEvents({
+          address: agentAddress,
+          abi: portfolioAgentABI,
+          eventName: "AutomationTriggered",
           args: ownerFilter,
           fromBlock: from,
           toBlock: latest,
@@ -86,39 +99,68 @@ export function useTickEvents(agentAddress: Address | undefined): { events: Tick
       ]);
 
       const parsed: TickEvent[] = [
-        ...decisions.map((d) => {
-          const args = d.args as {
+        ...results.map((r) => {
+          const args = r.args as {
+            jobId: Hex;
             cycleId: bigint;
-            tickIdx: bigint;
-            llmHasError: boolean;
-            completionPayload: Hex;
+            hasError: boolean;
+            textResponse: string;
             errorMessage: string;
           };
-          const { headline, reason, confidence } = parseCompletionPayload(args.completionPayload);
+          if (args.hasError) {
+            return {
+              type: "decision" as const,
+              headline: `Agent error: ${args.errorMessage || "unknown"}`,
+              reason: args.errorMessage,
+              confidence: 0,
+              blockNumber: r.blockNumber ?? 0n,
+              protocol: "ZeroClaw",
+              txHash: r.transactionHash as Hex,
+              cycleId: args.cycleId,
+              jobId: args.jobId,
+              hasError: true,
+            };
+          }
+          const { headline, reason, confidence } = parseTextResponse(args.textResponse);
           return {
             type: "decision" as const,
-            headline: args.llmHasError ? `LLM Error: ${args.errorMessage || "unknown"}` : headline,
-            reason: args.llmHasError ? args.errorMessage : reason,
-            confidence: args.llmHasError ? 0 : confidence,
-            blockNumber: d.blockNumber ?? 0n,
-            protocol: "GLM-4.7-FP8",
-            txHash: d.transactionHash as Hex,
+            headline,
+            reason,
+            confidence,
+            blockNumber: r.blockNumber ?? 0n,
+            protocol: "ZeroClaw · GLM-4.7-FP8",
+            txHash: r.transactionHash as Hex,
             cycleId: args.cycleId,
-            tickIdx: args.tickIdx,
-            llmHasError: args.llmHasError,
+            jobId: args.jobId,
+            hasError: false,
+          };
+        }),
+        ...triggers.map((t) => {
+          const args = t.args as { jobId: Hex };
+          const shortJob = args.jobId !== ZERO_JOB
+            ? `${args.jobId.slice(0, 10)}…`
+            : "pending";
+          return {
+            type: "triggered" as const,
+            headline: `Sovereign agent job submitted`,
+            reason: `Job ID: ${shortJob}`,
+            confidence: 0,
+            blockNumber: t.blockNumber ?? 0n,
+            protocol: "0x080C",
+            txHash: t.transactionHash as Hex,
+            jobId: args.jobId,
           };
         }),
         ...failures.map((f) => {
           const args = f.args as { tickIdx: bigint; phase: string; reason: string };
           return {
             type: "failed" as const,
-            headline: `${args.phase} tick failed`,
+            headline: `${args.phase} failed`,
             reason: args.reason,
             confidence: 0,
             blockNumber: f.blockNumber ?? 0n,
             protocol: args.phase,
             txHash: f.transactionHash as Hex,
-            tickIdx: args.tickIdx,
             phase: args.phase,
           };
         }),

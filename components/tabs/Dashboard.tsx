@@ -66,14 +66,15 @@ function ConfidenceBar({ value }: { value: number }) {
 function DecisionCard({ event }: { event: TickEvent }) {
   const isHold = event.headline.toLowerCase().includes("hold");
   const isFailed = event.type === "failed";
-  const borderColor = isFailed ? "rgba(255,71,87,0.2)" : isHold ? "rgba(255,255,255,0.08)" : "rgba(91,79,232,0.25)";
-  const iconColor = isFailed ? "#FF4757" : isHold ? "rgba(255,255,255,0.3)" : "#5B4FE8";
+  const isTriggered = event.type === "triggered";
+  const borderColor = isFailed ? "rgba(255,71,87,0.2)" : isTriggered ? "rgba(212,168,71,0.2)" : isHold ? "rgba(255,255,255,0.08)" : "rgba(91,79,232,0.25)";
+  const iconColor = isFailed ? "#FF4757" : isTriggered ? "#D4A847" : isHold ? "rgba(255,255,255,0.3)" : "#5B4FE8";
 
   return (
     <div className="rounded-xl border p-3" style={{ backgroundColor: "rgba(255,255,255,0.02)", borderColor }}>
       <div className="flex items-start gap-2">
         <span className="mt-0.5 text-base" style={{ color: iconColor }}>
-          {isFailed ? "✕" : isHold ? "⏸" : "⟳"}
+          {isFailed ? "✕" : isTriggered ? "⟳" : isHold ? "⏸" : "✓"}
         </span>
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium text-white">{event.headline}</p>
@@ -256,7 +257,7 @@ export function Dashboard({ agentAddress }: { agentAddress: Address }) {
                 { k: "registered", v: String(agentState.registered) },
                 { k: "riskMode", v: ["Safe", "Balanced", "Degen"][agentState.riskMode] ?? String(agentState.riskMode) },
                 { k: "scheduleId", v: agentState.scheduleId > 0n ? `${String(agentState.scheduleId).slice(0, 12)}…` : "—" },
-                { k: "tickIndex", v: String(agentState.tickIndex) },
+                { k: "pendingJob", v: agentState.pendingJobId !== "0x0000000000000000000000000000000000000000000000000000000000000000" ? `${agentState.pendingJobId.slice(0, 10)}…` : "idle" },
                 { k: "lastCycleId", v: agentState.lastCycleId > 0n ? String(agentState.lastCycleId) : "—" },
                 { k: "executor", v: agentState.executor ? `${agentState.executor.slice(0, 8)}…` : "—" },
               ].map(({ k, v }) => (
