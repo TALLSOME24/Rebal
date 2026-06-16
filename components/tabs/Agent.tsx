@@ -91,6 +91,11 @@ export function Agent({ agentAddress }: { agentAddress: Address }) {
   const [fundAmt, setFundAmt] = useState("0.1");
   const [isFunding, setIsFunding] = useState(false);
 
+  // Token recovery
+  const [recoverTokenAddr, setRecoverTokenAddr] = useState("");
+  const [recoverAmt, setRecoverAmt] = useState("");
+  const [recoverAll, setRecoverAll] = useState(false);
+
   const { data: contractBalance, refetch: refetchBalance } = useBalance({
     address: agentAddress,
     query: { refetchInterval: 12_000 },
@@ -138,6 +143,12 @@ export function Agent({ agentAddress }: { agentAddress: Address }) {
   const { isSuccess: withdrawSuccess, isError: withdrawError } = useWaitForTransactionReceipt({ hash: withdrawHash, query: { enabled: !!withdrawHash } });
   useEffect(() => { if (withdrawSuccess) toast("RITUAL recovered ✓", "success"); }, [withdrawSuccess, toast]);
   useEffect(() => { if (withdrawError) toast("Recovery failed", "error"); }, [withdrawError, toast]);
+
+  // withdrawToken / withdrawAll
+  const { writeContract: writeTokenRecover, data: tokenRecoverHash, isPending: tokenRecoverPending } = useWriteContract();
+  const { isSuccess: tokenRecoverSuccess, isError: tokenRecoverError } = useWaitForTransactionReceipt({ hash: tokenRecoverHash, query: { enabled: !!tokenRecoverHash } });
+  useEffect(() => { if (tokenRecoverSuccess) toast("Tokens recovered ✓", "success"); }, [tokenRecoverSuccess, toast]);
+  useEffect(() => { if (tokenRecoverError) toast("Token recovery failed", "error"); }, [tokenRecoverError, toast]);
 
   // owner
   const { data: ownerAddress } = useReadContract({
@@ -206,6 +217,23 @@ export function Agent({ agentAddress }: { agentAddress: Address }) {
       abi: portfolioAgentABI,
       functionName: "withdrawAllRitualFees",
     });
+  };
+
+  const recoverToken = () => {
+    const addr = recoverTokenAddr.trim() as Address;
+    if (!addr || !addr.startsWith("0x") || addr.length !== 42) {
+      return toast("Enter a valid token address", "error");
+    }
+    toast("Recovering tokens…", "pending");
+    if (recoverAll) {
+      writeTokenRecover({ address: agentAddress, abi: portfolioAgentABI, functionName: "withdrawAll", args: [addr] });
+    } else {
+      // Amount is entered as raw smallest-unit integer (avoids decimal precision ambiguity)
+      let parsed: bigint;
+      try { parsed = BigInt(recoverAmt.trim()); } catch { return toast("Enter amount as an integer (raw token units)", "error"); }
+      if (parsed <= 0n) return toast("Enter a valid amount or check 'Withdraw All'", "error");
+      writeTokenRecover({ address: agentAddress, abi: portfolioAgentABI, functionName: "withdrawToken", args: [addr, parsed] });
+    }
   };
 
   return (
@@ -465,6 +493,64 @@ export function Agent({ agentAddress }: { agentAddress: Address }) {
           </button>
         </Card>
       </div>
+
+      {/* Recover Tokens — owner only */}
+      {isOwner && (
+        <Card>
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <Label>Recover Tokens</Label>
+            <span
+              className="rounded-full border px-2 py-0.5 font-mono text-[9px]"
+              style={{ borderColor: "rgba(255,71,87,0.2)", color: "rgba(255,71,87,0.6)", backgroundColor: "rgba(255,71,87,0.04)" }}
+            >
+              owner only
+            </span>
+          </div>
+          <p className="mb-3 text-xs" style={{ color: "rgba(255,255,255,0.35)" }}>
+            Withdraw any ERC20 token that is held by the agent contract back to your wallet.
+          </p>
+          <div className="space-y-2">
+            <input
+              type="text"
+              value={recoverTokenAddr}
+              onChange={(e) => setRecoverTokenAddr(e.target.value)}
+              placeholder="Token address (0x…)"
+              className="w-full rounded-xl border px-3 py-2 font-mono text-sm focus:outline-none"
+              style={{ backgroundColor: "rgba(255,255,255,0.04)", borderColor: "rgba(255,255,255,0.08)", color: "white" }}
+            />
+            <input
+              type="text"
+              value={recoverAmt}
+              onChange={(e) => setRecoverAmt(e.target.value)}
+              placeholder="Raw integer amount (e.g. 1000000 for 1 USDC, 1000000000000000000 for 1 WETH)"
+              disabled={recoverAll}
+              className="w-full rounded-xl border px-3 py-2 font-mono text-sm focus:outline-none disabled:opacity-30"
+              style={{ backgroundColor: "rgba(255,255,255,0.04)", borderColor: "rgba(255,255,255,0.08)", color: "white" }}
+            />
+            <label className="flex cursor-pointer items-center gap-2">
+              <input
+                type="checkbox"
+                checked={recoverAll}
+                onChange={(e) => setRecoverAll(e.target.checked)}
+                className="h-3.5 w-3.5 rounded"
+              />
+              <span className="text-xs" style={{ color: "rgba(255,255,255,0.45)" }}>Withdraw entire balance</span>
+            </label>
+          </div>
+          <button
+            type="button"
+            onClick={recoverToken}
+            disabled={!address || tokenRecoverPending}
+            className="mt-3 w-full rounded-xl border px-4 py-2 text-sm font-semibold transition hover:opacity-90 disabled:opacity-40"
+            style={{ borderColor: "rgba(255,71,87,0.35)", color: "#FF4757", backgroundColor: "rgba(255,71,87,0.06)" }}
+          >
+            {tokenRecoverPending ? "Recovering…" : recoverAll ? "Withdraw All Tokens" : "Withdraw Token"}
+          </button>
+          <p className="mt-2 font-mono text-[10px]" style={{ color: "rgba(255,255,255,0.2)" }}>
+            Enter raw smallest-unit integer: WETH/WBTC = 18/8 dec, USDC/USDT = 6 dec. Use &quot;Withdraw entire balance&quot; to skip.
+          </p>
+        </Card>
+      )}
     </div>
   );
 }
