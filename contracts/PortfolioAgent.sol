@@ -425,7 +425,7 @@ contract PortfolioAgent {
             emptyTools,                            // 19: tools (string[]) — [] = all
             uint16(50),                            // 20: maxTurns (uint16)
             uint32(8192),                          // 21: maxTokens (uint32)
-            '["https://rpc.ritualfoundation.org"]' // 22: rpcUrls (string)
+            ""                                     // 22: rpcUrls ("" = executor uses default RPC)
         );
 
         (bool ok, bytes memory ret) = SOVEREIGN_AGENT.call(encoded);
