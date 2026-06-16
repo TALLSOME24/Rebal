@@ -28,6 +28,27 @@ export const portfolioAgentFactoryABI = [
     outputs: [{ name: "", type: "address" }],
   },
   {
+    name: "setDexRouter",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "_router", type: "address" }],
+    outputs: [],
+  },
+  {
+    name: "dexRouter",
+    type: "function",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "address" }],
+  },
+  {
+    name: "factoryOwner",
+    type: "function",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "address" }],
+  },
+  {
     name: "AgentDeployed",
     type: "event",
     inputs: [

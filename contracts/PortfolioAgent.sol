@@ -1,33 +1,25 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-/// @title PortfolioAgent — on-chain audited rebalance reasoning loop
+/// @title PortfolioAgent v9 — on-chain rebalancing with Rebal DEX integration
 /// @notice Uses HTTP 0x0801 for live quotes, LLM 0x0802 for reasoning.
 ///         Alternating ticks: even = HTTP prices, odd = LLM reasoning.
+///         v9: DEX router wired; _doRebalance executes swaps on LLM tick.
 ///
-/// FIXES applied vs original:
-///   [1] tickIndex mapping — scheduler encodes static calldata so executionIndex
-///       is always 0. Contract now tracks its own per-user tick counter.
-///   [2] HTTP abi.encode — corrected to exact 13-field layout from ritual-dapp-http skill.
-///   [3] LLM abi.encode — corrected to exact 30-field layout from ritual-dapp-llm skill.
-///       convoHistory tuple added as field 30 (was missing).
-///   [4] Gas — frontend must pass 2_000_000 for HTTP ticks, 3_000_000 for LLM ticks.
-///       startAutomation() now takes separate httpGasLimit and llmGasLimit.
-///       Scheduler uses the higher of the two (llmGasLimit) so both tick types are covered.
-///   [5] TTL — minimum 300 blocks for GLM-4.7-FP8 (reasoning model; 10-40s wall-clock).
-///       Hard minimum enforced in startAutomation().
-///   [6] onScheduledTick — require(success) removed from precompile calls and replaced
-///       with graceful error emission so a failed precompile tick does not silently
-///       brick the scheduler for all future ticks.
-///   [7] _runLLM convoHistory — FIXED in v7: pass ConvoStorageRef("","","") directly,
-///       NOT abi.encode(string(""),string(""),string("")) which produces bytes (double-encoded).
-///       Double-encoding caused "length insufficient 224 require 288" at LLM precompile.
-///   [8] _runHttpPrices executor — HTTP precompile needs capability-0 executor from
-///       TEEServiceRegistry, not the LLM executor stored in portfolios[].executor.
-///       This was the root cause of all ticks being silently dropped by the builder.
-///   [9] withdrawFees(uint256) — ADDED in v8: allows owner to withdraw this contract's
-///       RitualWallet balance after the lock expires. Prevents RITUAL from being
-///       permanently stuck when migrating to a new contract version.
+/// FIXES applied:
+///   [1] tickIndex mapping — per-user counter (scheduler always sends index 0)
+///   [2] HTTP abi.encode — exact 13-field layout
+///   [3] LLM abi.encode — exact 30-field layout with convoHistory tuple
+///   [4] Gas — 3_000_000 minimum for LLM ticks
+///   [5] TTL — 300 block minimum for GLM-4.7-FP8
+///   [6] onScheduledTick — graceful error emission (no require(success))
+///   [7] _runLLM convoHistory — ConvoStorageRef("","","") directly, not double-encoded
+///   [8] _runHttpPrices — uses httpExecutor (capability-0) stored at registration
+///   [9] withdrawFees(uint256) — withdraw RitualWallet balance after lock expires
+///  [10] withdrawToken / withdrawAll — recover any ERC20 from agent contract
+///  [11] dexRouter — Rebal DEX router; auto-rebalance on each LLM tick
+
+// ─── Interfaces ───────────────────────────────────────────────────────────────
 
 interface IRitualWallet {
     function deposit(uint256 lockDuration) external payable;
@@ -36,7 +28,6 @@ interface IRitualWallet {
     function balanceOf(address account) external view returns (uint256);
     function lockUntil(address account) external view returns (uint256);
 }
-
 
 interface IScheduler {
     function schedule(
@@ -51,93 +42,94 @@ interface IScheduler {
         uint256 value,
         address payer
     ) external returns (uint256 callId);
-
     function cancel(uint256 callId) external;
 }
 
+interface IERC20 {
+    function balanceOf(address account) external view returns (uint256);
+    function transfer(address to, uint256 amount) external returns (bool);
+    function transferFrom(address from, address to, uint256 amount) external returns (bool);
+    function approve(address spender, uint256 amount) external returns (bool);
+}
+
+interface IUniswapV2Router {
+    function swapExactTokensForTokens(
+        uint256 amountIn,
+        uint256 amountOutMin,
+        address[] calldata path,
+        address to,
+        uint256 deadline
+    ) external returns (uint256[] memory amounts);
+
+    function getAmountsOut(
+        uint256 amountIn,
+        address[] calldata path
+    ) external view returns (uint256[] memory amounts);
+}
+
 /// @dev StorageRef tuple for LLM convoHistory field (field 30).
-///      Pass ('','','') when not using persistent conversation history.
 struct ConvoStorageRef {
     string platform;
     string path;
     string creds;
 }
 
+// ─── Contract ─────────────────────────────────────────────────────────────────
+
 contract PortfolioAgent {
-    // ─── Precompile addresses ───────────────────────────────────────────────
+    // ─── Precompile addresses ────────────────────────────────────────────────
     address public constant HTTP_PRECOMPILE = 0x0000000000000000000000000000000000000801;
     address public constant LLM_PRECOMPILE  = 0x0000000000000000000000000000000000000802;
 
-    // ─── System contract addresses ──────────────────────────────────────────
+    // ─── System contract addresses ───────────────────────────────────────────
     address public constant RITUAL_WALLET   = 0x532F0dF0896F353d8C3DD8cc134e8129DA2a3948;
     address public constant SCHEDULER_CONST = 0x56e776BAE2DD60664b69Bd5F865F1180ffB7D58B;
+
+    // ─── Portfolio token addresses (Ritual Chain mock ERC20s) ────────────────
+    address public constant WETH_TOKEN = 0xF42c8B335EE1ee9eD84109C68C238E50E0EE27EC;
+    address public constant WBTC_TOKEN = 0x9Ca60C0d83EAD718D43C5f2134013e2bA4Ce3ec7;
+    address public constant USDC_TOKEN = 0x031CbE4EbC5aF2ca432Ae3df4DbD65053F1A6584;
+    address public constant USDT_TOKEN = 0xEa9E6a94E83E4B46eA7Dff6802D269F9a4e21E02;
 
     IScheduler public immutable scheduler;
     address    public immutable owner;
 
-    // ─── Minimum TTL enforced onchain ───────────────────────────────────────
-    // GLM-4.7-FP8 is a reasoning model; inference takes 10-40s wall-clock.
-    // 300 blocks ≈ 105s at ~350ms block time — safe baseline per ritual-dapp-llm skill.
+    /// @notice Rebal DEX router — set at construction, updatable by owner.
+    address public dexRouter;
+
     uint32 public constant MIN_TTL_BLOCKS = 300;
 
-    // ─── Types ──────────────────────────────────────────────────────────────
+    // ─── Types ───────────────────────────────────────────────────────────────
     enum RiskMode { Conservative, Balanced, Aggressive }
 
     struct Portfolio {
         bool registered;
         RiskMode riskMode;
-        uint16 ethBps;        // basis points for WETH  (sum of all three = 10_000)
-        uint16 wbtcBps;       // basis points for WBTC
-        uint16 usdcBps;       // basis points for USDC (USDT = 10_000 - sum)
-        address executor;     // LLM executor (capability=1)
+        uint16 ethBps;
+        uint16 wbtcBps;
+        uint16 usdcBps;
+        address executor;
         uint256 scheduleId;
-        // FIX [8]: HTTP executor stored at registration time, not fetched on each tick.
-        //          Calling TEEServiceRegistry from within a Scheduler callback causes
-        //          the RPC to reject the nested system-contract call during simulation.
-        address httpExecutor; // HTTP executor (capability=0)
+        address httpExecutor;
     }
 
-    // ─── Storage ────────────────────────────────────────────────────────────
+    // ─── Storage ─────────────────────────────────────────────────────────────
     mapping(address => Portfolio)  public  portfolios;
     mapping(address => bytes)      internal _lastPricesBody;
     mapping(address => uint256)    public  lastCycleId;
+    mapping(address => uint256)    public  tickIndex;
 
-    /// @dev FIX [1]: Per-user tick counter. The Ritual Scheduler re-plays the
-    ///      same encoded calldata every tick, so executionIndex in the calldata
-    ///      is always 0. This mapping is the source of truth for which phase
-    ///      (HTTP vs LLM) the next tick should execute.
-    mapping(address => uint256) public tickIndex;
-
-    // ─── Constants ──────────────────────────────────────────────────────────
+    // ─── Constants ───────────────────────────────────────────────────────────
     string public constant COINGECKO_URL =
         "https://api.coingecko.com/api/v3/simple/price?ids=ethereum,bitcoin,usd-coin&vs_currencies=usd";
-
-    /// @dev Model pinned to production-only model per ritual-dapp-llm skill.
     string public constant MODEL = "zai-org/GLM-4.7-FP8";
 
-    // ─── Events ─────────────────────────────────────────────────────────────
-    event PortfolioRegistered(
-        address indexed owner,
-        RiskMode risk,
-        uint16 ethBps,
-        uint16 wbtcBps,
-        uint16 usdcBps
-    );
+    // ─── Events ──────────────────────────────────────────────────────────────
+    event PortfolioRegistered(address indexed owner, RiskMode risk, uint16 ethBps, uint16 wbtcBps, uint16 usdcBps);
     event FeesDepositFor(address indexed user, uint256 amountWei);
-    event AutomationScheduled(
-        address indexed owner,
-        uint256 indexed callId,
-        uint32 frequency,
-        uint32 numCalls
-    );
+    event AutomationScheduled(address indexed owner, uint256 indexed callId, uint32 frequency, uint32 numCalls);
     event AutomationCancelled(address indexed owner, uint256 indexed callId);
-    event PricesSnapshot(
-        address indexed owner,
-        uint256 indexed tickIdx,
-        uint256 indexed cycleId,
-        uint16 statusCode,
-        bytes body
-    );
+    event PricesSnapshot(address indexed owner, uint256 indexed tickIdx, uint256 indexed cycleId, uint16 statusCode, bytes body);
     event RebalanceDecision(
         address indexed owner,
         uint256 indexed cycleId,
@@ -148,69 +140,120 @@ contract PortfolioAgent {
         bytes32 pricesHash,
         RiskMode riskMode
     );
-    event TickFailed(
-        address indexed owner,
-        uint256 indexed tickIdx,
-        string phase,
-        string reason
+    event SwapExecuted(
+        address indexed portfolioOwner,
+        address indexed tokenIn,
+        address indexed tokenOut,
+        uint256 amountIn,
+        uint256 amountOut
     );
+    event TickFailed(address indexed owner, uint256 indexed tickIdx, string phase, string reason);
+    event TokenDeposited(address indexed token, address indexed from, uint256 amount);
+    event TokenWithdrawn(address indexed token, address indexed to, uint256 amount);
 
-    // ─── Modifiers ──────────────────────────────────────────────────────────
+    // ─── Modifiers ───────────────────────────────────────────────────────────
     modifier onlyScheduler() {
         require(msg.sender == address(scheduler), "not scheduler");
         _;
     }
 
-    // ─── Constructor ─────────────────────────────────────────────────────────
-    constructor(address _owner) {
+    modifier onlyOwner() {
+        require(msg.sender == owner, "only owner");
+        _;
+    }
+
+    // ─── Constructor ──────────────────────────────────────────────────────────
+    constructor(address _owner, address _dexRouter) {
         require(_owner != address(0), "owner required");
         scheduler = IScheduler(SCHEDULER_CONST);
         owner = _owner;
+        dexRouter = _dexRouter;
     }
 
     receive() external payable {}
 
-    // ─── Public: RitualWallet helpers ────────────────────────────────────────
+    // ─── Owner: DEX router ───────────────────────────────────────────────────
 
-    /// @notice Read caller's RitualWallet balance.
+    function setDexRouter(address _router) external onlyOwner {
+        dexRouter = _router;
+    }
+
+    // ─── Token custody: deposit / withdraw ───────────────────────────────────
+
+    /// @notice Deposit ERC20 tokens into the agent contract for auto-rebalancing.
+    ///         Caller must approve this contract first.
+    function depositToken(address token, uint256 amount) external {
+        require(amount > 0, "amount required");
+        require(IERC20(token).transferFrom(msg.sender, address(this), amount), "transfer failed");
+        emit TokenDeposited(token, msg.sender, amount);
+    }
+
+    /// @notice Withdraw any ERC20 token from the agent contract to the owner.
+    ///         Pass 0 to withdraw the full balance.
+    function withdrawToken(address token, uint256 amount) external onlyOwner {
+        uint256 bal = IERC20(token).balanceOf(address(this));
+        uint256 amt = amount == 0 ? bal : amount;
+        require(amt > 0 && amt <= bal, "nothing to withdraw");
+        require(IERC20(token).transfer(owner, amt), "transfer failed");
+        emit TokenWithdrawn(token, owner, amt);
+    }
+
+    /// @notice Withdraw the entire balance of a token to the owner.
+    function withdrawAll(address token) external onlyOwner {
+        uint256 bal = IERC20(token).balanceOf(address(this));
+        require(bal > 0, "nothing to withdraw");
+        require(IERC20(token).transfer(owner, bal), "transfer failed");
+        emit TokenWithdrawn(token, owner, bal);
+    }
+
+    // ─── RitualWallet helpers ─────────────────────────────────────────────────
+
     function ritualBalance(address user) external view returns (uint256) {
         return IRitualWallet(RITUAL_WALLET).balanceOf(user);
     }
 
-    /// @notice Read this contract's RitualWallet balance used by scheduled executions.
     function contractRitualBalance() external view returns (uint256) {
         return IRitualWallet(RITUAL_WALLET).balanceOf(address(this));
     }
 
-    /// @notice Deposit RITUAL into this contract's RitualWallet balance for Scheduler fees.
-    ///         Ritual Scheduler calls are made by this contract, so the canonical
-    ///         Solidity integration passes address(this) as payer.
-    ///         NOTE: LLM escrow for GLM-4.7-FP8 is ~0.31 RITUAL per in-flight call.
-    ///         Deposit at least 0.4 RITUAL before starting automation.
     function depositFeesForCaller(uint256 lockDurationBlocks) external payable {
         require(msg.value > 0, "value required");
         IRitualWallet(RITUAL_WALLET).deposit{value: msg.value}(lockDurationBlocks);
         emit FeesDepositFor(msg.sender, msg.value);
     }
 
-    /// @notice Withdraw RITUAL from this contract's RitualWallet balance back to the owner.
-    ///         Only callable by the deployer (owner). Lock must have expired first.
-    ///         Pass 0 to withdraw the full balance.
-    function withdrawFees(uint256 amount) external {
-        require(msg.sender == owner, "only owner");
+    /// @notice Withdraw RITUAL from this contract's RitualWallet balance to the owner.
+    ///         Lock must have expired. Pass 0 to withdraw full balance.
+    function withdrawFees(uint256 amount) external onlyOwner {
         uint256 bal = IRitualWallet(RITUAL_WALLET).balanceOf(address(this));
         require(bal > 0, "nothing to withdraw");
         uint256 amt = amount == 0 ? bal : amount;
         IRitualWallet(RITUAL_WALLET).withdraw(amt);
-        // Forward the received RITUAL to the owner
         (bool ok,) = owner.call{value: amt}("");
         require(ok, "transfer failed");
     }
 
-    // ─── Public: Portfolio management ────────────────────────────────────────
+    /// @notice Alias for withdrawFees with explicit naming.
+    function withdrawRitualFees(uint256 amount) external onlyOwner {
+        uint256 bal = IRitualWallet(RITUAL_WALLET).balanceOf(address(this));
+        require(bal > 0, "nothing to withdraw");
+        uint256 amt = amount == 0 ? bal : amount;
+        IRitualWallet(RITUAL_WALLET).withdraw(amt);
+        (bool ok,) = owner.call{value: amt}("");
+        require(ok, "transfer failed");
+    }
 
-    /// @notice Register or update portfolio weights. Basis points must sum to 10_000.
-    ///         USDT allocation = 10_000 - ethBps - wbtcBps - usdcBps (implied).
+    /// @notice Withdraw the full RitualWallet balance to the owner in one call.
+    function withdrawAllRitualFees() external onlyOwner {
+        uint256 bal = IRitualWallet(RITUAL_WALLET).balanceOf(address(this));
+        require(bal > 0, "nothing to withdraw");
+        IRitualWallet(RITUAL_WALLET).withdraw(bal);
+        (bool ok,) = owner.call{value: bal}("");
+        require(ok, "transfer failed");
+    }
+
+    // ─── Portfolio management ─────────────────────────────────────────────────
+
     function registerPortfolio(
         RiskMode risk,
         uint16 ethBps_,
@@ -224,31 +267,19 @@ contract PortfolioAgent {
         require(httpExecutor_ != address(0), "httpExecutor required");
 
         Portfolio storage p = portfolios[msg.sender];
-        p.registered    = true;
-        p.riskMode      = risk;
-        p.ethBps        = ethBps_;
-        p.wbtcBps       = wbtcBps_;
-        p.usdcBps       = usdcBps_;
-        p.executor      = executor;
-        p.httpExecutor  = httpExecutor_;
+        p.registered   = true;
+        p.riskMode     = risk;
+        p.ethBps       = ethBps_;
+        p.wbtcBps      = wbtcBps_;
+        p.usdcBps      = usdcBps_;
+        p.executor     = executor;
+        p.httpExecutor = httpExecutor_;
 
         emit PortfolioRegistered(msg.sender, risk, ethBps_, wbtcBps_, usdcBps_);
     }
 
-    // ─── Public: Automation ──────────────────────────────────────────────────
+    // ─── Automation ───────────────────────────────────────────────────────────
 
-    /// @notice Start (or restart) the alternating HTTP→LLM scheduler for msg.sender.
-    ///
-    /// @param frequencyBlocks  How often the scheduler fires (80 blocks ≈ 16 min recommended).
-    /// @param numCycles        How many full HTTP+LLM cycles to run (totalRuns = numCycles * 2).
-    /// @param gasLimit         Gas budget per tick. Must be >= 3_000_000 to cover LLM ticks.
-    ///                         The scheduler uses this for every tick, so size for the most
-    ///                         expensive one (LLM). HTTP ticks only need ~2_000_000 but
-    ///                         over-allocating is harmless.
-    /// @param maxFeePerGas     EIP-1559 maxFeePerGas (wei). Use 30_000_000_000 (30 gwei) as default.
-    /// @param schedulerTtl     Blocks the executor has to fulfill each tick.
-    ///                         MINIMUM 300 — GLM-4.7-FP8 inference takes 10-40s wall-clock.
-    ///                         Recommended: 300-500.
     function startAutomation(
         uint32 frequencyBlocks,
         uint32 numCycles,
@@ -257,13 +288,13 @@ contract PortfolioAgent {
         uint32 schedulerTtl
     ) external {
         Portfolio storage p = portfolios[msg.sender];
-        require(p.registered,          "portfolio not registered");
+        require(p.registered,             "portfolio not registered");
         require(p.executor != address(0), "executor not set");
-        require(numCycles >= 1,        "need at least 1 cycle");
-        require(gasLimit >= 3_000_000, "gasLimit too low: min 3_000_000");
+        require(numCycles >= 1,           "need at least 1 cycle");
+        require(gasLimit >= 3_000_000,    "gasLimit too low: min 3_000_000");
         require(schedulerTtl >= MIN_TTL_BLOCKS, "ttl too low: min 300 blocks");
 
-        uint32 totalRuns = numCycles * 2; // each cycle = 1 HTTP tick + 1 LLM tick
+        uint32 totalRuns = numCycles * 2;
         uint256 maxCostPerExecution = uint256(gasLimit) * maxFeePerGas;
         require(
             IRitualWallet(RITUAL_WALLET).balanceOf(address(this)) >= maxCostPerExecution,
@@ -274,45 +305,34 @@ contract PortfolioAgent {
             "contract fee lock too short"
         );
 
-        // Cancel existing schedule if any — use try/catch since
-// scheduler rejects cancelling already-expired schedules
-if (p.scheduleId != 0) {
-    try scheduler.cancel(p.scheduleId) {
-        emit AutomationCancelled(msg.sender, p.scheduleId);
-    } catch {
-        // Schedule already expired or consumed — safe to ignore
-    }
-    p.scheduleId = 0;
-}
+        if (p.scheduleId != 0) {
+            try scheduler.cancel(p.scheduleId) {
+                emit AutomationCancelled(msg.sender, p.scheduleId);
+            } catch {}
+            p.scheduleId = 0;
+        }
 
-        // FIX [1]: Reset tick index so the new schedule starts from tick 0 (HTTP).
         tickIndex[msg.sender] = 0;
 
-        // NOTE: executionIndex param in calldata is intentionally 0 and ignored.
-        // The contract uses tickIndex[portfolioOwner] as the authoritative counter.
-        bytes memory data = abi.encodeCall(
-            this.onScheduledTick,
-            (uint256(0), msg.sender)
-        );
+        bytes memory data = abi.encodeCall(this.onScheduledTick, (uint256(0), msg.sender));
 
         uint256 callId = scheduler.schedule(
             data,
             gasLimit,
-            uint32(block.number + frequencyBlocks), // start block
+            uint32(block.number + frequencyBlocks),
             totalRuns,
             frequencyBlocks,
             schedulerTtl,
             maxFeePerGas,
-            0,           // maxPriorityFeePerGas (0 = no tip required)
-            0,           // value
-            address(this) // payer; matches Scheduler msg.sender, no approval path needed
+            0,
+            0,
+            address(this)
         );
 
         p.scheduleId = callId;
         emit AutomationScheduled(msg.sender, callId, frequencyBlocks, totalRuns);
     }
 
-    /// @notice Cancel the running schedule for msg.sender.
     function cancelAutomation() external {
         Portfolio storage p = portfolios[msg.sender];
         require(p.scheduleId != 0, "no active schedule");
@@ -321,25 +341,19 @@ if (p.scheduleId != 0) {
         p.scheduleId = 0;
     }
 
-    /// @notice Read the last stored CoinGecko response body for an owner.
-    function lastPricesBody(address owner) external view returns (bytes memory) {
-        return _lastPricesBody[owner];
+    function lastPricesBody(address owner_) external view returns (bytes memory) {
+        return _lastPricesBody[owner_];
     }
 
-    // ─── Scheduler callback ──────────────────────────────────────────────────
+    // ─── Scheduler callback ───────────────────────────────────────────────────
 
-    /// @notice Called by the Ritual Scheduler every `frequencyBlocks` blocks.
-    ///         FIX [1]: Ignores the encoded executionIndex (always 0 from scheduler)
-    ///         and reads tickIndex[portfolioOwner] instead.
-    ///         Even ticks → HTTP price fetch. Odd ticks → LLM reasoning.
     function onScheduledTick(
-        uint256, /* executionIndex — ignored, always 0 from scheduler */
+        uint256, /* executionIndex — ignored */
         address portfolioOwner
     ) external onlyScheduler {
         Portfolio storage p = portfolios[portfolioOwner];
         require(p.registered && p.executor != address(0), "portfolio not found");
 
-        // FIX [1]: Use and increment the per-user counter.
         uint256 idx = tickIndex[portfolioOwner];
         tickIndex[portfolioOwner] = idx + 1;
 
@@ -350,28 +364,9 @@ if (p.scheduleId != 0) {
         }
     }
 
-    // ─── Internal: HTTP tick ─────────────────────────────────────────────────
+    // ─── HTTP tick ────────────────────────────────────────────────────────────
 
-    /// @dev FIX [2]: Encodes exactly the 13-field HTTP request layout defined in
-    ///      ritual-dapp-http/SKILL.md:
-    ///
-    ///  0  address  executor
-    ///  1  bytes[]  encryptedSecrets
-    ///  2  uint256  ttl
-    ///  3  bytes[]  secretSignatures
-    ///  4  bytes    userPublicKey
-    ///  5  string   url
-    ///  6  uint8    method  (1 = GET)
-    ///  7  string[] headerKeys
-    ///  8  string[] headerValues
-    ///  9  bytes    body
-    /// 10  uint256  dkmsKeyIndex
-    /// 11  uint8    dkmsKeyFormat
-    /// 12  bool     piiEnabled
     function _runHttpPrices(uint256 tickIdx, address portfolioOwner) internal {
-        // FIX [8]: Use the httpExecutor stored at registerPortfolio time (capability-0).
-        // Calling TEEServiceRegistry from within a Scheduler callback is rejected by the
-        // Ritual RPC during simulation, so we resolve the address once at registration.
         address httpExecutor = portfolios[portfolioOwner].httpExecutor;
         if (httpExecutor == address(0)) {
             emit TickFailed(portfolioOwner, tickIdx, "HTTP", "httpExecutor not set");
@@ -379,23 +374,21 @@ if (p.scheduleId != 0) {
         }
 
         bytes memory encoded = abi.encode(
-            httpExecutor,       //  0: executor (HTTP capability-0, not LLM)
-            new bytes[](0),     //  1: encryptedSecrets (none)
-            uint256(300),       //  2: ttl (300 blocks — matches LLM minimum for consistency)
-            new bytes[](0),     //  3: secretSignatures (none)
-            bytes(""),          //  4: userPublicKey (none)
-            COINGECKO_URL,      //  5: url
-            uint8(1),           //  6: method = GET
-            new string[](0),    //  7: headerKeys (none)
-            new string[](0),    //  8: headerValues (none)
-            bytes(""),          //  9: body (none for GET)
-            uint256(0),         // 10: dkmsKeyIndex (not using dKMS)
-            uint8(0),           // 11: dkmsKeyFormat (default)
-            false               // 12: piiEnabled
+            httpExecutor,
+            new bytes[](0),
+            uint256(300),
+            new bytes[](0),
+            bytes(""),
+            COINGECKO_URL,
+            uint8(1),
+            new string[](0),
+            new string[](0),
+            bytes(""),
+            uint256(0),
+            uint8(0),
+            false
         );
 
-        // FIX [6]: Do not require(success). Emit TickFailed and return gracefully
-        // so the scheduler is not bricked if the HTTP precompile errors.
         (bool success, bytes memory result) = HTTP_PRECOMPILE.call(encoded);
 
         if (!success) {
@@ -403,10 +396,7 @@ if (p.scheduleId != 0) {
             return;
         }
 
-        // Unwrap async envelope: (bytes simmedInput, bytes actualOutput)
         if (result.length < 64) {
-            // Commitment phase — actualOutput not yet available.
-            // This is expected during simulation; emit a placeholder snapshot.
             emit PricesSnapshot(portfolioOwner, tickIdx, tickIdx / 2, 0, bytes("pending"));
             return;
         }
@@ -414,16 +404,14 @@ if (p.scheduleId != 0) {
         (, bytes memory actualOutput) = abi.decode(result, (bytes, bytes));
 
         if (actualOutput.length == 0) {
-            // Still in commitment phase
             emit PricesSnapshot(portfolioOwner, tickIdx, tickIdx / 2, 0, bytes("pending"));
             return;
         }
 
-        // Decode HTTP response: (uint16 status, string[] hKeys, string[] hVals, bytes body, string err)
         (
             uint16 status,
-            ,       // headerKeys (unused)
-            ,       // headerValues (unused)
+            ,
+            ,
             bytes memory body,
             string memory transportErr
         ) = abi.decode(actualOutput, (uint16, string[], string[], bytes, string));
@@ -438,41 +426,8 @@ if (p.scheduleId != 0) {
         emit PricesSnapshot(portfolioOwner, tickIdx, tickIdx / 2, status, body);
     }
 
-    // ─── Internal: LLM tick ──────────────────────────────────────────────────
+    // ─── LLM tick ─────────────────────────────────────────────────────────────
 
-    /// @dev FIX [3]: Encodes exactly the 30-field LLM request layout defined in
-    ///      ritual-dapp-llm/SKILL.md. Field order:
-    ///
-    ///  0  address          executor
-    ///  1  bytes[]          encryptedSecrets
-    ///  2  uint256          ttl
-    ///  3  bytes[]          secretSignatures
-    ///  4  bytes            userPublicKey
-    ///  5  string           messagesJson
-    ///  6  string           model
-    ///  7  int256           frequencyPenalty   (×1000)
-    ///  8  string           logitBiasJson
-    ///  9  bool             logprobs
-    /// 10  int256           maxCompletionTokens
-    /// 11  string           metadataJson
-    /// 12  string           modalitiesJson
-    /// 13  uint256          n
-    /// 14  bool             parallelToolCalls
-    /// 15  int256           presencePenalty    (×1000)
-    /// 16  string           reasoningEffort
-    /// 17  bytes            responseFormatData
-    /// 18  int256           seed               (-1 = null)
-    /// 19  string           serviceTier
-    /// 20  string           stopJson
-    /// 21  bool             stream
-    /// 22  int256           temperature        (×1000)
-    /// 23  bytes            toolChoiceData
-    /// 24  bytes            toolsData
-    /// 25  int256           topLogprobs        (-1 = null)
-    /// 26  int256           topP               (×1000)
-    /// 27  string           user
-    /// 28  bool             piiEnabled
-    /// 29  (string,string,string)  convoHistory (platform, path, key_ref)
     function _runLLM(uint256 tickIdx, address portfolioOwner) internal {
         Portfolio storage p = portfolios[portfolioOwner];
         bytes memory pricesBody = _lastPricesBody[portfolioOwner];
@@ -480,42 +435,39 @@ if (p.scheduleId != 0) {
 
         bytes memory messagesJson = _encodeMessages(portfolioOwner, p, pricesBody);
 
-        // FIX [3] + FIX [7]: All 30 fields present; convoHistory is ('','','')
-        // because we do not use persistent GCS conversation history.
         bytes memory encoded = abi.encode(
-            p.executor,         //  0: executor
-            new bytes[](0),     //  1: encryptedSecrets
-            uint256(300),       //  2: ttl — 300 blocks minimum for GLM-4.7-FP8
-            new bytes[](0),     //  3: secretSignatures
-            bytes(""),          //  4: userPublicKey
-            string(messagesJson),//  5: messagesJson
-            MODEL,              //  6: model
-            int256(0),          //  7: frequencyPenalty
-            "",                 //  8: logitBiasJson
-            false,              //  9: logprobs
-            int256(4096),       // 10: maxCompletionTokens — >=4096 required for GLM-4.7-FP8
-            "",                 // 11: metadataJson
-            "",                 // 12: modalitiesJson
-            uint256(1),         // 13: n
-            true,               // 14: parallelToolCalls
-            int256(0),          // 15: presencePenalty
-            "medium",           // 16: reasoningEffort
-            bytes(""),          // 17: responseFormatData
-            int256(-1),         // 18: seed (null)
-            "auto",             // 19: serviceTier
-            "",                 // 20: stopJson
-            false,              // 21: stream
-            _temperatureForRisk(p.riskMode), // 22: temperature ×1000
-            bytes(""),          // 23: toolChoiceData
-            bytes(""),          // 24: toolsData
-            int256(-1),         // 25: topLogprobs (null)
-            int256(1000),       // 26: topP (1.0 × 1000)
-            "",                 // 27: user
-            false,              // 28: piiEnabled
-            ConvoStorageRef("", "", "")  // 29: convoHistory as tuple (string,string,string) — NOT abi.encode(bytes)
+            p.executor,
+            new bytes[](0),
+            uint256(300),
+            new bytes[](0),
+            bytes(""),
+            string(messagesJson),
+            MODEL,
+            int256(0),
+            "",
+            false,
+            int256(4096),
+            "",
+            "",
+            uint256(1),
+            true,
+            int256(0),
+            "medium",
+            bytes(""),
+            int256(-1),
+            "auto",
+            "",
+            false,
+            _temperatureForRisk(p.riskMode),
+            bytes(""),
+            bytes(""),
+            int256(-1),
+            int256(1000),
+            "",
+            false,
+            ConvoStorageRef("", "", "")
         );
 
-        // FIX [6]: Graceful failure — emit TickFailed instead of reverting.
         (bool success, bytes memory result) = LLM_PRECOMPILE.call(encoded);
 
         if (!success) {
@@ -524,28 +476,17 @@ if (p.scheduleId != 0) {
         }
 
         if (result.length < 64) {
-            // Commitment phase
-            emit RebalanceDecision(
-                portfolioOwner, tickIdx / 2, tickIdx,
-                true, bytes(""), "pending commitment",
-                pricesHash, p.riskMode
-            );
+            emit RebalanceDecision(portfolioOwner, tickIdx / 2, tickIdx, true, bytes(""), "pending commitment", pricesHash, p.riskMode);
             return;
         }
 
         (, bytes memory actualOutput) = abi.decode(result, (bytes, bytes));
 
         if (actualOutput.length == 0) {
-            emit RebalanceDecision(
-                portfolioOwner, tickIdx / 2, tickIdx,
-                true, bytes(""), "pending settlement",
-                pricesHash, p.riskMode
-            );
+            emit RebalanceDecision(portfolioOwner, tickIdx / 2, tickIdx, true, bytes(""), "pending settlement", pricesHash, p.riskMode);
             return;
         }
 
-        // Decode LLM response envelope:
-        // (bool hasError, bytes completionData, bytes modelMeta, string errorMsg, (string,string,string) convoRef)
         bool hasErr;
         bytes memory completion;
         string memory errorMsg;
@@ -563,20 +504,165 @@ if (p.scheduleId != 0) {
             hasErr, completion, errorMsg,
             pricesHash, p.riskMode
         );
+
+        // [11] Auto-rebalance: if LLM succeeded and DEX router is configured,
+        //      compare actual allocations to target and execute the largest needed swap.
+        if (!hasErr && dexRouter != address(0)) {
+            _doRebalance(portfolioOwner, p);
+        }
     }
 
-    // ─── Internal: helpers ───────────────────────────────────────────────────
+    // ─── DEX rebalance ────────────────────────────────────────────────────────
 
-    /// @dev Returns temperature scaled ×1000 for each risk mode.
-    ///      Conservative: 0.2 → 200, Balanced: 0.6 → 600, Aggressive: 0.95 → 950.
+    /// @dev Compares actual token balances to target allocation and executes
+    ///      a single swap to correct the largest drift. Uses WETH as the
+    ///      routing hub for non-WETH pairs.
+    function _doRebalance(address portfolioOwner, Portfolio storage p) internal {
+        uint256 wethBal = IERC20(WETH_TOKEN).balanceOf(address(this));
+        uint256 wbtcBal = IERC20(WBTC_TOKEN).balanceOf(address(this));
+        uint256 usdcBal = IERC20(USDC_TOKEN).balanceOf(address(this));
+        uint256 usdtBal = IERC20(USDT_TOKEN).balanceOf(address(this));
+
+        // Skip if nothing to rebalance
+        if (wethBal == 0 && wbtcBal == 0 && usdcBal == 0 && usdtBal == 0) return;
+
+        // Get WETH price in USDC (1 WETH → X USDC, 6 decimals)
+        address[] memory path2 = new address[](2);
+        path2[0] = WETH_TOKEN;
+        path2[1] = USDC_TOKEN;
+        uint256 wethPriceUsdc;
+        try IUniswapV2Router(dexRouter).getAmountsOut(1e18, path2)
+            returns (uint256[] memory out) {
+            wethPriceUsdc = out[1];
+        } catch {
+            emit TickFailed(portfolioOwner, tickIndex[portfolioOwner], "REBAL", "price fetch failed: WETH/USDC");
+            return;
+        }
+        if (wethPriceUsdc == 0) return;
+
+        // Get WBTC price in USDC via WETH (1 WBTC → X WETH → X USDC)
+        uint256 wbtcPriceUsdc;
+        if (wbtcBal > 0) {
+            path2[0] = WBTC_TOKEN;
+            path2[1] = WETH_TOKEN;
+            try IUniswapV2Router(dexRouter).getAmountsOut(1e8, path2)
+                returns (uint256[] memory out) {
+                // out[1] is WETH per 1 WBTC (18 dec); convert to USDC (6 dec)
+                wbtcPriceUsdc = out[1] * wethPriceUsdc / 1e18;
+            } catch {
+                wbtcPriceUsdc = wethPriceUsdc * 20; // fallback: 1 WBTC = 20 WETH
+            }
+        }
+
+        // Calculate current values in USDC (6 decimals)
+        uint256 vWeth = wethBal * wethPriceUsdc / 1e18;
+        uint256 vWbtc = wbtcBal > 0 ? wbtcBal * wbtcPriceUsdc / 1e8 : 0;
+        uint256 vUsdc = usdcBal;
+        uint256 vUsdt = usdtBal;
+
+        uint256 total = vWeth + vWbtc + vUsdc + vUsdt;
+        if (total == 0) return;
+
+        // Target values in USDC
+        uint16 usdtBps = uint16(10000 - p.ethBps - p.wbtcBps - p.usdcBps);
+        uint256 tWeth = total * p.ethBps  / 10000;
+        uint256 tWbtc = total * p.wbtcBps / 10000;
+        uint256 tUsdc = total * p.usdcBps / 10000;
+        uint256 tUsdt = total * usdtBps   / 10000;
+
+        // Signed drifts (positive = overweight)
+        int256 dWeth = int256(vWeth) - int256(tWeth);
+        int256 dWbtc = int256(vWbtc) - int256(tWbtc);
+        int256 dUsdc = int256(vUsdc) - int256(tUsdc);
+        int256 dUsdt = int256(vUsdt) - int256(tUsdt);
+
+        // Find most overweight token (to sell)
+        address tokenIn;
+        int256 maxD = int256(1e5); // minimum $0.10 threshold (USDC 6 dec)
+        if (dWeth > maxD) { maxD = dWeth; tokenIn = WETH_TOKEN; }
+        if (dWbtc > maxD) { maxD = dWbtc; tokenIn = WBTC_TOKEN; }
+        if (dUsdc > maxD) { maxD = dUsdc; tokenIn = USDC_TOKEN; }
+        if (dUsdt > maxD) { maxD = dUsdt; tokenIn = USDT_TOKEN; }
+        if (tokenIn == address(0)) return; // portfolio is balanced
+
+        // Find most underweight token (to buy)
+        address tokenOut;
+        int256 minD = int256(0);
+        if (dWeth < minD) { minD = dWeth; tokenOut = WETH_TOKEN; }
+        if (dWbtc < minD) { minD = dWbtc; tokenOut = WBTC_TOKEN; }
+        if (dUsdc < minD) { minD = dUsdc; tokenOut = USDC_TOKEN; }
+        if (dUsdt < minD) { minD = dUsdt; tokenOut = USDT_TOKEN; }
+        if (tokenOut == address(0) || tokenIn == tokenOut) return;
+
+        // Swap half the excess (conservative; multiple ticks converge)
+        uint256 swapValueUsdc = uint256(maxD) / 2;
+
+        // Convert USDC value to tokenIn native amount
+        uint256 amountIn;
+        if      (tokenIn == WETH_TOKEN) amountIn = swapValueUsdc * 1e18 / wethPriceUsdc;
+        else if (tokenIn == WBTC_TOKEN) amountIn = wbtcPriceUsdc > 0 ? swapValueUsdc * 1e8 / wbtcPriceUsdc : 0;
+        else                            amountIn = swapValueUsdc; // USDC or USDT (6 dec)
+
+        // Cap at available balance
+        uint256 maxBal = tokenIn == WETH_TOKEN ? wethBal
+                       : tokenIn == WBTC_TOKEN ? wbtcBal
+                       : tokenIn == USDC_TOKEN ? usdcBal
+                       : usdtBal;
+        if (amountIn > maxBal) amountIn = maxBal;
+        if (amountIn == 0) return;
+
+        _executeSwap(portfolioOwner, tokenIn, tokenOut, amountIn);
+    }
+
+    /// @dev Executes a swap via the Rebal DEX router.
+    ///      Uses direct path if one token is WETH, otherwise routes through WETH.
+    function _executeSwap(
+        address portfolioOwner,
+        address tokenIn,
+        address tokenOut,
+        uint256 amountIn
+    ) internal {
+        // Build routing path
+        address[] memory path;
+        if (tokenIn == WETH_TOKEN || tokenOut == WETH_TOKEN) {
+            path = new address[](2);
+            path[0] = tokenIn;
+            path[1] = tokenOut;
+        } else {
+            path = new address[](3);
+            path[0] = tokenIn;
+            path[1] = WETH_TOKEN;
+            path[2] = tokenOut;
+        }
+
+        IERC20(tokenIn).approve(dexRouter, amountIn);
+
+        try IUniswapV2Router(dexRouter).swapExactTokensForTokens(
+            amountIn,
+            0,              // accept any output; allocation logic controls acceptable drift
+            path,
+            address(this),
+            block.timestamp + 300_000
+        ) returns (uint256[] memory amounts) {
+            IERC20(tokenIn).approve(dexRouter, 0);
+            emit SwapExecuted(
+                portfolioOwner, tokenIn, tokenOut,
+                amountIn, amounts[amounts.length - 1]
+            );
+        } catch {
+            IERC20(tokenIn).approve(dexRouter, 0);
+            emit TickFailed(portfolioOwner, tickIndex[portfolioOwner], "SWAP", "swap reverted");
+        }
+    }
+
+    // ─── Internal helpers ─────────────────────────────────────────────────────
+
     function _temperatureForRisk(RiskMode r) internal pure returns (int256) {
         if (r == RiskMode.Conservative) return 200;
         if (r == RiskMode.Balanced)     return 600;
         return 950;
     }
 
-    /// @dev Builds the OpenAI-compatible messages JSON with hex-encoded price blob.
-    ///      Prices are hex-encoded to avoid escaping raw JSON quotes in Solidity.
     function _encodeMessages(
         address owner_,
         Portfolio storage p,
@@ -618,8 +704,7 @@ if (p.scheduleId != 0) {
     function _addrToAscii(address a) internal pure returns (bytes memory out) {
         bytes memory alphabet = "0123456789abcdef";
         out = new bytes(42);
-        out[0] = "0";
-        out[1] = "x";
+        out[0] = "0"; out[1] = "x";
         for (uint256 i = 0; i < 20; i++) {
             uint8 b = uint8(uint160(a) >> (8 * (19 - i)));
             out[2 + i * 2] = alphabet[b >> 4];
@@ -629,15 +714,10 @@ if (p.scheduleId != 0) {
 
     function uint2dec(uint256 v) internal pure returns (bytes memory) {
         if (v == 0) return "0";
-        uint256 temp = v;
-        uint256 digits;
+        uint256 temp = v; uint256 digits;
         while (temp != 0) { digits++; temp /= 10; }
         bytes memory buf = new bytes(digits);
-        while (v != 0) {
-            digits--;
-            buf[digits] = bytes1(uint8(48 + (v % 10)));
-            v /= 10;
-        }
+        while (v != 0) { digits--; buf[digits] = bytes1(uint8(48 + (v % 10))); v /= 10; }
         return buf;
     }
 
@@ -645,8 +725,7 @@ if (p.scheduleId != 0) {
         if (data.length == 0) return "0x";
         bytes16 alphabet = "0123456789abcdef";
         bytes memory str = new bytes(2 + data.length * 2);
-        str[0] = "0";
-        str[1] = "x";
+        str[0] = "0"; str[1] = "x";
         for (uint256 i = 0; i < data.length; i++) {
             str[2 + i * 2] = alphabet[uint8(data[i] >> 4)];
             str[3 + i * 2] = alphabet[uint8(data[i] & 0x0f)];

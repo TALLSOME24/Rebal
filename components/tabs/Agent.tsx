@@ -204,8 +204,7 @@ export function Agent({ agentAddress }: { agentAddress: Address }) {
     writeWithdraw({
       address: agentAddress,
       abi: portfolioAgentABI,
-      functionName: "withdrawFees",
-      args: [0n],
+      functionName: "withdrawAllRitualFees",
     });
   };
 
@@ -240,7 +239,7 @@ export function Agent({ agentAddress }: { agentAddress: Address }) {
                 {agentState.registered ? "Active" : "Paused"}
               </span>
               <span className="text-sm" style={{ color: "rgba(255,255,255,0.4)" }}>
-                PortfolioAgent v8 · Ritual Chain 1979
+                PortfolioAgent v9 · Ritual Chain 1979
               </span>
             </div>
 

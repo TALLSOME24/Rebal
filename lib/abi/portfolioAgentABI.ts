@@ -1,5 +1,4 @@
-// ABI for PortfolioAgent v8 deployed at 0xee71797530a584E9391F8E97E9BA6E91DBAe3c5e on chain 1979
-// Functions verified against contracts/PortfolioAgent.sol source.
+// ABI for PortfolioAgent v9 — with DEX integration, token custody, and recovery functions.
 export const portfolioAgentABI = [
   {
     name: "registerPortfolio",
@@ -56,6 +55,61 @@ export const portfolioAgentABI = [
     type: "function",
     stateMutability: "nonpayable",
     inputs: [{ name: "amount", type: "uint256" }],
+    outputs: [],
+  },
+  {
+    name: "withdrawRitualFees",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "amount", type: "uint256" }],
+    outputs: [],
+  },
+  {
+    name: "withdrawAllRitualFees",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [],
+    outputs: [],
+  },
+  {
+    name: "withdrawToken",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "token",  type: "address" },
+      { name: "amount", type: "uint256" },
+    ],
+    outputs: [],
+  },
+  {
+    name: "withdrawAll",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "token", type: "address" }],
+    outputs: [],
+  },
+  {
+    name: "depositToken",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "token",  type: "address" },
+      { name: "amount", type: "uint256" },
+    ],
+    outputs: [],
+  },
+  {
+    name: "dexRouter",
+    type: "function",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "address" }],
+  },
+  {
+    name: "setDexRouter",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "_router", type: "address" }],
     outputs: [],
   },
   {
@@ -197,10 +251,39 @@ export const portfolioAgentABI = [
     type: "event",
     name: "TickFailed",
     inputs: [
-      { name: "owner", type: "address", indexed: true },
-      { name: "tickIdx", type: "uint256", indexed: true },
-      { name: "phase", type: "string", indexed: false },
-      { name: "reason", type: "string", indexed: false },
+      { name: "owner",   type: "address", indexed: true  },
+      { name: "tickIdx", type: "uint256", indexed: true  },
+      { name: "phase",   type: "string",  indexed: false },
+      { name: "reason",  type: "string",  indexed: false },
+    ],
+  },
+  {
+    type: "event",
+    name: "SwapExecuted",
+    inputs: [
+      { name: "portfolioOwner", type: "address", indexed: true  },
+      { name: "tokenIn",        type: "address", indexed: true  },
+      { name: "tokenOut",       type: "address", indexed: true  },
+      { name: "amountIn",       type: "uint256", indexed: false },
+      { name: "amountOut",      type: "uint256", indexed: false },
+    ],
+  },
+  {
+    type: "event",
+    name: "TokenDeposited",
+    inputs: [
+      { name: "token",  type: "address", indexed: true  },
+      { name: "from",   type: "address", indexed: true  },
+      { name: "amount", type: "uint256", indexed: false },
+    ],
+  },
+  {
+    type: "event",
+    name: "TokenWithdrawn",
+    inputs: [
+      { name: "token",  type: "address", indexed: true  },
+      { name: "to",     type: "address", indexed: true  },
+      { name: "amount", type: "uint256", indexed: false },
     ],
   },
 ] as const;

@@ -18,6 +18,8 @@ module.exports = {
       url: process.env.RITUAL_RPC_URL || "https://rpc.ritualfoundation.org",
       chainId: 1979,
       accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
+      timeout: 120000,
+      httpHeaders: {},
     },
   },
 };
