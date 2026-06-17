@@ -78,10 +78,10 @@ export function Agent({ agentAddress }: { agentAddress: Address }) {
   const { toast } = useToast();
 
   // Scheduler config
-  const [freq, setFreq] = useState(80);
-  const [cycles, setCycles] = useState(12);
+  const [freq, setFreq] = useState(5000);
+  const [cycles, setCycles] = useState(2);
   const [gasLimit, setGasLimit] = useState(3000000);
-  const [ttl, setTtl] = useState(350);
+  const [ttl, setTtl] = useState(500);
 
   // RitualWallet deposit
   const [depositAmt, setDepositAmt] = useState("0.35");
@@ -280,12 +280,17 @@ export function Agent({ agentAddress }: { agentAddress: Address }) {
 
       {/* Scheduler Setup */}
       <Card>
-        <Label>Scheduler Setup</Label>
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <Label>Scheduler Setup</Label>
+          <span className="font-mono text-[10px]" style={{ color: "rgba(255,255,255,0.3)" }}>
+            ~{Math.round(freq * 60 / 1000)} min between ticks · {freq * cycles} total blocks
+          </span>
+        </div>
         <div className="grid gap-4 sm:grid-cols-2">
-          <SliderField label="Frequency (blocks)" value={freq} min={20} max={500} onChange={setFreq} />
-          <SliderField label="Cycles" value={cycles} min={10} max={500} onChange={setCycles} />
+          <SliderField label="Frequency (blocks)" value={freq} min={500} max={10000} step={500} onChange={setFreq} />
+          <SliderField label="Num calls" value={cycles} min={1} max={10} onChange={setCycles} />
           <SliderField label="Gas limit" value={gasLimit} min={3000000} max={10000000} step={100000} onChange={setGasLimit} />
-          <SliderField label="TTL (blocks)" value={ttl} min={300} max={3600} onChange={setTtl} />
+          <SliderField label="TTL (blocks)" value={ttl} min={300} max={1000} step={50} onChange={setTtl} />
         </div>
         <div className="mt-4 flex flex-wrap gap-2">
           <button

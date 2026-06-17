@@ -59,6 +59,13 @@ const agentAbi = [
     outputs: [],
   },
   {
+    name: "cancelAutomation",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [],
+    outputs: [],
+  },
+  {
     name: "portfolios",
     type: "function",
     stateMutability: "view",
@@ -93,9 +100,10 @@ const walletAbi = [
 ];
 
 // v10 Sovereign Agent parameters
-// frequency * numCalls = 2000 * 5 = 10,000 = scheduler MAX_LIFESPAN exactly
-const FREQ      = 2000;         // blocks between ticks (~11.7 min at 350ms/block)
-const NUM_CALLS = 5;            // one sovereign agent job per tick
+// Ritual scheduler MAX_LIFESPAN = 10,000 blocks (frequency * numCalls <= 10,000)
+// freq=5000, numCalls=2 => 10,000 exactly — two ticks, ~5 min apart at 60ms/block
+const FREQ      = 5000;         // blocks between ticks (~5 min at ~60ms/block)
+const NUM_CALLS = 2;            // two ticks total (5000 * 2 = 10,000 = MAX_LIFESPAN)
 const GAS       = 3_000_000;
 const TTL       = 500;          // blocks (Ritual scheduler hard cap)
 const MAX_FEE   = parseGwei("30");
@@ -127,42 +135,74 @@ async function main() {
   console.log("\n  RitualWallet balance :", formatEther(rwBal), "RITUAL");
   console.log("  lockUntil            :", rwLock.toString(), rwLock < block ? "(EXPIRED)" : "(valid)");
 
-  // Step 1 — depositFeesForCaller
+  // Step 1 — depositFeesForCaller (skipped if lock is already valid and balance sufficient)
   console.log("\n" + "-".repeat(58));
-  console.log("  Step 1: depositFeesForCaller");
-  console.log(`    lockDurationBlocks : ${LOCK_DUR.toString()}`);
-  console.log(`    value              : ${formatEther(DEPOSIT)} RITUAL`);
+  const needsDeposit = rwLock < block + BigInt(TTL) || rwBal === 0n;
+  if (!needsDeposit) {
+    console.log("  Step 1: depositFeesForCaller -- SKIPPED (lock valid, balance sufficient)");
+    console.log(`    balance   : ${formatEther(rwBal)} RITUAL`);
+    console.log(`    lockUntil : ${rwLock.toString()}`);
+  } else {
+    console.log("  Step 1: depositFeesForCaller");
+    console.log(`    lockDurationBlocks : ${LOCK_DUR.toString()}`);
+    console.log(`    value              : ${formatEther(DEPOSIT)} RITUAL`);
 
-  let depositHash;
-  try {
-    depositHash = await wall.writeContract({
-      address: AGENT,
-      abi: agentAbi,
-      functionName: "depositFeesForCaller",
-      args: [LOCK_DUR],
-      value: DEPOSIT,
-    });
-  } catch (err) {
-    console.error("\n  depositFeesForCaller FAILED:", err.shortMessage || err.message);
-    process.exit(1);
+    let depositHash;
+    try {
+      depositHash = await wall.writeContract({
+        address: AGENT,
+        abi: agentAbi,
+        functionName: "depositFeesForCaller",
+        args: [LOCK_DUR],
+        value: DEPOSIT,
+      });
+    } catch (err) {
+      console.error("\n  depositFeesForCaller FAILED:", err.shortMessage || err.message);
+      process.exit(1);
+    }
+    console.log("  TX:", depositHash);
+    const depositReceipt = await pub.waitForTransactionReceipt({ hash: depositHash });
+    console.log("  status:", depositReceipt.status === "success" ? "SUCCESS" : "REVERTED");
+    if (depositReceipt.status !== "success") { console.error("  Deposit reverted."); process.exit(1); }
+
+    const newLock = await pub.readContract({ address: WALLET, abi: walletAbi, functionName: "lockUntil", args: [AGENT] });
+    const newBal  = await pub.readContract({ address: WALLET, abi: walletAbi, functionName: "balanceOf", args: [AGENT] });
+    console.log("  new lockUntil :", newLock.toString(), "(must be >=", (block + BigInt(TTL)).toString(), ")");
+    console.log("  new balance   :", formatEther(newBal), "RITUAL");
+    if (newLock < block + BigInt(TTL)) {
+      console.error("  Lock still too short -- unexpected."); process.exit(1);
+    }
   }
-  console.log("  TX:", depositHash);
-  const depositReceipt = await pub.waitForTransactionReceipt({ hash: depositHash });
-  console.log("  status:", depositReceipt.status === "success" ? "SUCCESS" : "REVERTED");
-  if (depositReceipt.status !== "success") { console.error("  Deposit reverted."); process.exit(1); }
 
-  const newLock = await pub.readContract({ address: WALLET, abi: walletAbi, functionName: "lockUntil", args: [AGENT] });
-  const newBal  = await pub.readContract({ address: WALLET, abi: walletAbi, functionName: "balanceOf", args: [AGENT] });
-  console.log("  new lockUntil :", newLock.toString(), "(must be >=", (block + BigInt(TTL)).toString(), ")");
-  console.log("  new balance   :", formatEther(newBal), "RITUAL");
-  if (newLock < block + BigInt(TTL)) {
-    console.error("  Lock still too short -- unexpected."); process.exit(1);
-  }
-
-  // Step 2 — startAutomation
+  // Step 2 — cancelAutomation (cancel existing schedule before restarting)
   console.log("\n" + "-".repeat(58));
-  console.log("  Step 2: startAutomation (v10 Sovereign Agent params)");
-  console.log(`    frequencyBlocks : ${FREQ}  (~${Math.round(FREQ * 350 / 60)} seconds per tick)`);
+  console.log("  Step 2: cancelAutomation (clear existing schedule)");
+  const scheduleId = p.scheduleId ?? p[6];
+  if (scheduleId && scheduleId !== 0n) {
+    let cancelHash;
+    try {
+      cancelHash = await wall.writeContract({
+        address: AGENT,
+        abi: agentAbi,
+        functionName: "cancelAutomation",
+      });
+    } catch (err) {
+      // Already cancelled or never started — not fatal
+      console.log("  cancelAutomation skipped:", err.shortMessage || err.message);
+    }
+    if (cancelHash) {
+      console.log("  TX:", cancelHash);
+      const cancelReceipt = await pub.waitForTransactionReceipt({ hash: cancelHash });
+      console.log("  status:", cancelReceipt.status === "success" ? "SUCCESS" : "REVERTED");
+    }
+  } else {
+    console.log("  No active schedule — skipping cancel.");
+  }
+
+  // Step 3 — startAutomation
+  console.log("\n" + "-".repeat(58));
+  console.log("  Step 3: startAutomation (v10 Sovereign Agent params)");
+  console.log(`    frequencyBlocks : ${FREQ}  (~${Math.round(FREQ * 60 / 1000)} minutes per tick at ~60ms/block)`);
   console.log(`    numCalls        : ${NUM_CALLS}  (freq * numCalls = ${FREQ * NUM_CALLS} = MAX_LIFESPAN)`);
   console.log(`    gasLimit        : ${GAS.toLocaleString()}`);
   console.log(`    maxFeePerGas    : ${Number(MAX_FEE) / 1e9} gwei`);
@@ -195,7 +235,7 @@ async function main() {
   console.log("\n" + "=".repeat(58));
   console.log("  DONE");
   console.log("  new scheduleId :", newCallId);
-  console.log("  first tick fires in ~", FREQ, "blocks (~", Math.round(FREQ * 350 / 60), "seconds)");
+  console.log("  first tick fires in ~", FREQ, "blocks (~", Math.round(FREQ * 60 / 1000), "minutes)");
   console.log("  Run: node scripts/check-agent.cjs to verify");
   console.log("=".repeat(58));
 }
