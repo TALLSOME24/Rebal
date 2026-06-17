@@ -100,7 +100,7 @@ const GAS       = 3_000_000;
 const TTL       = 500;          // blocks (Ritual scheduler hard cap)
 const MAX_FEE   = parseGwei("30");
 const LOCK_DUR  = 200_000n;     // >> TTL, gives ~20 days of lock on Ritual testnet
-const DEPOSIT   = parseEther("0.35");
+const DEPOSIT   = parseEther("0.4");
 
 async function main() {
   const block = await pub.getBlockNumber();

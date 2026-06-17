@@ -28,6 +28,16 @@ export const portfolioAgentFactoryABI = [
     outputs: [{ name: "", type: "address" }],
   },
   {
+    name: "overrideAgent",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "user",  type: "address" },
+      { name: "agent", type: "address" },
+    ],
+    outputs: [],
+  },
+  {
     name: "setDexRouter",
     type: "function",
     stateMutability: "nonpayable",

@@ -38,4 +38,12 @@ contract PortfolioAgentFactory {
     function hasAgent(address user) external view returns (bool) {
         return agentOf[user] != address(0);
     }
+
+    /// @notice Admin: remap user → agent (e.g. after a manual v10 deploy outside the factory).
+    function overrideAgent(address user, address agent) external {
+        require(msg.sender == factoryOwner, "not owner");
+        require(agent != address(0), "zero agent");
+        agentOf[user] = agent;
+        emit AgentDeployed(user, agent);
+    }
 }
