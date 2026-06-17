@@ -1,6 +1,6 @@
 import type { Address } from "viem";
 
-export const PORTFOLIO_AGENT: Address = "0x26b3a6c452a9a24cb10fa7892340ca6cc7631016";
+export const PORTFOLIO_AGENT: Address = "0x2d9407c5e4457355a521b28225daf4455794738d";
 export const FACTORY_ADDRESS: Address  = "0x5ecadae5ee001670db3f64abb9b45aec66132ad3";
 
 export const DEX_FACTORY: Address = "0xD2D774e8ca44Eb3449d9028d89d4861cE56a867c";

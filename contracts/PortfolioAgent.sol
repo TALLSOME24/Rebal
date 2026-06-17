@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-/// @title PortfolioAgent v10 — Sovereign Agent (0x080C) single-tick architecture
+/// @title PortfolioAgent v11 — Sovereign Agent (0x080C) single-tick architecture
 /// @notice One scheduled tick submits a ZeroClaw job that fetches prices + reasons
 ///         about drift in one TEE execution. The AsyncDelivery callback receives the
 ///         JSON decision and gates _doRebalance on "action":"swap".
@@ -315,6 +315,15 @@ contract PortfolioAgent {
         p.scheduleId = 0;
     }
 
+    // Admin escape hatch: clear a stuck pendingJobId caused by a callback that never arrived.
+    function clearPendingJob(address portfolioOwner) external onlyOwner {
+        bytes32 jid = pendingJobId[portfolioOwner];
+        if (jid != bytes32(0)) {
+            delete jobOwner[jid];
+            delete pendingJobId[portfolioOwner];
+        }
+    }
+
     // ─── Scheduler callback ───────────────────────────────────────────────────
 
     function onScheduledTick(
@@ -427,12 +436,25 @@ contract PortfolioAgent {
             return bytes32(0);
         }
 
-        if (ret.length < 32) {
+        // 0x080C returns abi.encode(bytes jobId, bytes extraData).
+        // ABI layout: ret[0:32]=offset(0x40=64), ret[32:64]=offset2, ret[64:96]=jobIdLen, ret[96:128]=jobId.
+        // abi.decode(ret,(bytes32)) would read word 0 = 0x40 (the offset), NOT the jobId — hence we extract
+        // the actual jobId from ret data offset 96.
+        if (ret.length < 128) {
             emit TickFailed(portfolioOwner, lastCycleId[portfolioOwner], "SOVEREIGN", "no jobId in return data");
             return bytes32(0);
         }
 
-        return abi.decode(ret, (bytes32));
+        bytes32 jobId;
+        assembly {
+            // ret is bytes memory: add(ret,32) is first data byte; data offset 96 = add(ret,128)
+            jobId := mload(add(ret, 128))
+        }
+        if (jobId == bytes32(0)) {
+            emit TickFailed(portfolioOwner, lastCycleId[portfolioOwner], "SOVEREIGN", "precompile returned zero jobId");
+            return bytes32(0);
+        }
+        return jobId;
     }
 
     // ─── Prompt builder ───────────────────────────────────────────────────────
