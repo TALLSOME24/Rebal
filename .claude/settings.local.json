@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "Bash(node -e \"require\\('eciesjs'\\); console.log\\('eciesjs present'\\)\")",
+      "Bash(node -e ' *)",
+      "Bash(npx hardhat *)",
+      "Bash(node *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)"
+    ]
+  }
+}
