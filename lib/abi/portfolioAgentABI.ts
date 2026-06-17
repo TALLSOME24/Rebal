@@ -6,12 +6,10 @@ export const portfolioAgentABI = [
     type: "function",
     stateMutability: "nonpayable",
     inputs: [
-      { name: "risk",              type: "uint8"   },
-      { name: "ethBps_",           type: "uint16"  },
-      { name: "wbtcBps_",          type: "uint16"  },
-      { name: "usdcBps_",          type: "uint16"  },
-      { name: "executor",          type: "address" },
-      { name: "encryptedSecrets_", type: "bytes"   },
+      { name: "risk",    type: "uint8"  },
+      { name: "ethBps_",  type: "uint16" },
+      { name: "wbtcBps_", type: "uint16" },
+      { name: "usdcBps_", type: "uint16" },
     ],
     outputs: [],
   },
@@ -29,13 +27,6 @@ export const portfolioAgentABI = [
       { name: "executor",    type: "address" },
       { name: "scheduleId",  type: "uint256" },
     ],
-  },
-  {
-    name: "encryptedSecretsOf",
-    type: "function",
-    stateMutability: "view",
-    inputs: [{ name: "user", type: "address" }],
-    outputs: [{ type: "bytes" }],
   },
   // ─── Automation ───────────────────────────────────────────────────────────
   {

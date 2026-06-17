@@ -75,7 +75,13 @@ contract PortfolioAgent {
     address public constant SCHEDULER_CONST = 0x56e776BAE2DD60664b69Bd5F865F1180ffB7D58B;
 
     // keccak256("onSovereignAgentResult(bytes32,bytes)")[0:4]
-    bytes4  public constant DELIVERY_SELECTOR = 0x8ca12055;
+    bytes4  public constant DELIVERY_SELECTOR   = 0x8ca12055;
+
+    // Cap-0 executor from TEEServiceRegistry — fixed for Ritual testnet
+    address public constant SOVEREIGN_EXECUTOR  = 0x9dc11412391Dc3EDF59811FC9Ee7bEbFD41c8b4C;
+
+    // ECIES-encrypted {"LLM_PROVIDER":"ritual"} to SOVEREIGN_EXECUTOR pubkey, nonce=12
+    bytes   public constant ENCRYPTED_SECRETS   = hex"04ec54f0903cb6dc3b1175794b7596175d1c94fc7ab569121cf19c165fd16cd00fc338ac3a07015f5df6ffc47563aaec2714487fe8b3a3fe20d8b193a8f1e708496af4b702616a44c836d30a9d8e6f1126583896feb9f6ffea2dafb964629b47d33807b77a142d503d2c738374153ae8b4c841c7abc4";
 
     // ─── Portfolio token addresses (Ritual Chain mock ERC20s) ────────────────
     address public constant WETH_TOKEN = 0xF42c8B335EE1ee9eD84109C68C238E50E0EE27EC;
@@ -105,7 +111,6 @@ contract PortfolioAgent {
 
     // ─── Storage ─────────────────────────────────────────────────────────────
     mapping(address => Portfolio) public  portfolios;
-    mapping(address => bytes)     internal _encryptedSecrets; // ECIES blob per owner
     mapping(address => bytes32)   public  pendingJobId;       // in-flight job per owner
     mapping(bytes32  => address)  public  jobOwner;           // reverse lookup for callback
     mapping(address => uint256)   public  lastCycleId;        // incremented on each result
@@ -230,20 +235,14 @@ contract PortfolioAgent {
     // ─── Portfolio management ─────────────────────────────────────────────────
 
     /// @notice Register or update your portfolio.
-    /// @param encryptedSecrets_ ECIES-encrypted JSON secrets (nonce=12).
-    ///        Encrypt {"LLM_PROVIDER":"ritual"} to the executor's publicKey from
-    ///        TEEServiceRegistry. Use ethers-ecies or equivalent with nonce length 12.
+    ///         Encrypted secrets and executor are hardcoded constants (testnet TEE is fixed).
     function registerPortfolio(
         RiskMode risk,
         uint16 ethBps_,
         uint16 wbtcBps_,
-        uint16 usdcBps_,
-        address executor,
-        bytes calldata encryptedSecrets_
+        uint16 usdcBps_
     ) external {
         require(ethBps_ + wbtcBps_ + usdcBps_ <= 10_000, "bps overflow");
-        require(executor != address(0), "executor required");
-        require(encryptedSecrets_.length > 0, "encryptedSecrets required");
 
         Portfolio storage p = portfolios[msg.sender];
         p.registered  = true;
@@ -251,15 +250,9 @@ contract PortfolioAgent {
         p.ethBps      = ethBps_;
         p.wbtcBps     = wbtcBps_;
         p.usdcBps     = usdcBps_;
-        p.executor    = executor;
-
-        _encryptedSecrets[msg.sender] = encryptedSecrets_;
+        p.executor    = SOVEREIGN_EXECUTOR;
 
         emit PortfolioRegistered(msg.sender, risk, ethBps_, wbtcBps_, usdcBps_);
-    }
-
-    function encryptedSecretsOf(address user) external view returns (bytes memory) {
-        return _encryptedSecrets[user];
     }
 
     // ─── Automation ───────────────────────────────────────────────────────────
@@ -396,7 +389,7 @@ contract PortfolioAgent {
         Portfolio storage p
     ) internal returns (bytes32) {
         string  memory prompt = _buildPrompt(portfolioOwner, p);
-        bytes   memory secrets = _encryptedSecrets[portfolioOwner];
+        bytes   memory secrets = ENCRYPTED_SECRETS;
 
         StorageRef    memory emptyRef   = StorageRef("", "", "");
         StorageRef[]  memory emptySkills = new StorageRef[](0);

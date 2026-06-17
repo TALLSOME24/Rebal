@@ -1,7 +1,10 @@
 /**
- * Calls startAutomation on PortfolioAgent v4.
- * The existing terminal schedule (2380345) will be silently skipped by the
- * try/catch in startAutomation; tickIndex is reset to 0.
+ * Calls startAutomation on PortfolioAgent v9.
+ * The expired schedule (2569725, all 24 windows missed by Infernet node) will
+ * be cancelled by the try/catch in startAutomation; tickIndex is reset to 0.
+ *
+ * Key fix vs prior run: frequency 80→1000, TTL 350→3000 blocks.
+ * The Infernet node needs a window >> tick interval to guarantee pickup.
  *
  * Run: node scripts/restart-automation.cjs
  */
@@ -17,7 +20,7 @@ const { privateKeyToAccount } = require("viem/accounts");
 
 const RITUAL_RPC =
   process.env.RITUAL_RPC_URL || "https://rpc.ritualfoundation.org";
-const AGENT = "0x971681AB0aeE3E4ED237305618CB95e2cEA3f4db";
+const AGENT = "0xc94Fcf97F441Ae6a693b8D2C7794778AEeA06Ea6"; // v9
 
 const PK = process.env.PRIVATE_KEY;
 if (!PK) { console.error("PRIVATE_KEY not set in .env"); process.exit(1); }
@@ -81,14 +84,16 @@ const agentAbi = [
   },
 ];
 
-// Parameters — must match deployment_history constraints:
-//   frequency × numCycles × 2 ≤ 10000 (lifespan)
-//   gasLimit ≥ 3_000_000
-//   schedulerTtl ≥ 300, ≤ 500
-const FREQ    = 80;   // blocks between ticks
-const CYCLES  = 12;   // HTTP+LLM pairs → 24 total ticks → lifespan=1920 ✓
+// Parameters at the Ritual scheduler's hard caps:
+//   MAX frequency: 400 blocks (scheduler rejects ≥ 450)
+//   MAX TTL:       500 blocks (scheduler rejects ≥ 600)
+// Prior run used freq=80/TTL=350 — only tick 0 was caught because all
+// 24 windows expired before the Infernet node could service them again.
+// freq=400 spaces ticks 140s apart; TTL=500 gives a 175s pickup window.
+const FREQ    = 400;  // blocks between ticks (scheduler max ~400)
+const CYCLES  = 12;   // HTTP+LLM pairs → 24 total ticks
 const GAS     = 3_000_000;
-const TTL     = 350;  // blocks per-tick TTL
+const TTL     = 500;  // blocks per-tick TTL (scheduler max ~500)
 const MAX_FEE = parseGwei("30"); // 30 gwei
 
 async function main() {
@@ -99,7 +104,7 @@ async function main() {
     .catch(() => null);
 
   console.log("═".repeat(58));
-  console.log("  restart-automation  —  Ritual Testnet (1979)");
+  console.log("  restart-automation  —  PortfolioAgent v9");
   console.log("═".repeat(58));
   console.log("  agent    :", AGENT);
   console.log("  owner    :", account.address);

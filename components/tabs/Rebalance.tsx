@@ -1,11 +1,11 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
+import { useAccount, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 import { portfolioAgentABI } from "@/lib/abi/portfolioAgentABI";
 import { useAgentState } from "@/hooks/useAgentState";
 import { useToast } from "@/components/Toast";
-import { fetchLlmExecutor, fetchHttpExecutor } from "@/lib/tee";
+import { SOVEREIGN_EXECUTOR_ADDRESS } from "@/lib/tee";
 import type { Address } from "viem";
 
 const RISK_MODES = [
@@ -13,25 +13,6 @@ const RISK_MODES = [
   { id: 1, label: "Balanced", desc: "60% max. Default drift control with measured upside." },
   { id: 2, label: "Degen", desc: "No limit. Max AI-suggested corrections when drift is material." },
 ] as const;
-
-function Card({ children, style, className = "" }: { children: React.ReactNode; style?: React.CSSProperties; className?: string }) {
-  return (
-    <div
-      className={`rounded-2xl border p-4 ${className}`}
-      style={{ backgroundColor: "rgba(255,255,255,0.025)", borderColor: "rgba(255,255,255,0.06)", ...style }}
-    >
-      {children}
-    </div>
-  );
-}
-
-function Label({ children }: { children: React.ReactNode }) {
-  return (
-    <p className="mb-2 font-mono text-[10px] uppercase tracking-widest" style={{ color: "rgba(255,255,255,0.25)", letterSpacing: "1.4px" }}>
-      {children}
-    </p>
-  );
-}
 
 function SliderRow({
   label,
@@ -125,10 +106,7 @@ export function Rebalance({ agentAddress }: { agentAddress: Address }) {
   const [riskMode, setRiskMode] = useState<0 | 1 | 2>(1);
   const [strategyText, setStrategyText] = useState("");
   const [parsedPreview, setParsedPreview] = useState<string | null>(null);
-  const [executors, setExecutors] = useState<{ llm?: Address; http?: Address }>({});
-  const [loadingExecutors, setLoadingExecutors] = useState(false);
 
-  // Pre-populate from onchain
   useEffect(() => {
     if (agentState.registered) {
       setWethPct(agentState.ethBps / 100);
@@ -137,18 +115,6 @@ export function Rebalance({ agentAddress }: { agentAddress: Address }) {
       setRiskMode(agentState.riskMode as 0 | 1 | 2);
     }
   }, [agentState.registered, agentState.ethBps, agentState.wbtcBps, agentState.usdcBps, agentState.riskMode]);
-
-  const loadExecutors = async () => {
-    setLoadingExecutors(true);
-    try {
-      const [llm, http] = await Promise.all([fetchLlmExecutor(), fetchHttpExecutor()]);
-      setExecutors({ llm, http });
-    } catch (e) {
-      toast(e instanceof Error ? e.message : "Failed to load executors", "error");
-    } finally {
-      setLoadingExecutors(false);
-    }
-  };
 
   const { writeContract, data: txHash, isPending } = useWriteContract();
   const { isLoading: confirming, isSuccess } = useWaitForTransactionReceipt({
@@ -184,7 +150,6 @@ export function Rebalance({ agentAddress }: { agentAddress: Address }) {
 
   const savePortfolio = () => {
     if (!address) return toast("Connect wallet first", "error");
-    if (!executors.llm || !executors.http) return toast("Load executors first", "error");
     if (totalInvalid) return toast("Total allocation exceeds 100%", "error");
     const wethBps = Math.round(wethPct * 100);
     const wbtcBps = Math.round(wbtcPct * 100);
@@ -194,7 +159,7 @@ export function Rebalance({ agentAddress }: { agentAddress: Address }) {
       address: agentAddress,
       abi: portfolioAgentABI,
       functionName: "registerPortfolio",
-      args: [riskMode, wethBps, wbtcBps, usdcBps, executors.llm, executors.http],
+      args: [riskMode, wethBps, wbtcBps, usdcBps],
     });
   };
 
@@ -316,17 +281,8 @@ export function Rebalance({ agentAddress }: { agentAddress: Address }) {
           <div className="mt-4 flex items-center gap-3">
             <button
               type="button"
-              onClick={() => void loadExecutors()}
-              disabled={loadingExecutors || !!executors.llm}
-              className="rounded-xl border px-4 py-2 text-sm transition hover:bg-white/5 disabled:opacity-40"
-              style={{ borderColor: "rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.5)" }}
-            >
-              {executors.llm ? "Executors loaded ✓" : loadingExecutors ? "Loading…" : "Load Executors"}
-            </button>
-            <button
-              type="button"
               onClick={savePortfolio}
-              disabled={!address || !executors.llm || totalInvalid || isPending || confirming}
+              disabled={!address || totalInvalid || isPending || confirming}
               className="rounded-xl px-5 py-2 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-40"
               style={{ backgroundColor: "#5B4FE8" }}
             >
@@ -344,24 +300,15 @@ export function Rebalance({ agentAddress }: { agentAddress: Address }) {
           style={{ backgroundColor: "rgba(255,255,255,0.025)", borderColor: "rgba(0,200,150,0.2)" }}
         >
           <p className="mb-2 font-mono text-[10px] uppercase tracking-widest" style={{ color: "rgba(255,255,255,0.25)" }}>
-            TEE Executor
+            Sovereign Executor
           </p>
-          {executors.llm ? (
-            <div className="space-y-2">
-              <div>
-                <p className="font-mono text-[9px] uppercase" style={{ color: "rgba(255,255,255,0.3)" }}>LLM</p>
-                <p className="break-all font-mono text-[11px]" style={{ color: "#00C896" }}>{executors.llm}</p>
-              </div>
-              <div>
-                <p className="font-mono text-[9px] uppercase" style={{ color: "rgba(255,255,255,0.3)" }}>HTTP</p>
-                <p className="break-all font-mono text-[11px]" style={{ color: "rgba(255,255,255,0.5)" }}>{executors.http}</p>
-              </div>
-            </div>
-          ) : (
-            <p className="text-sm" style={{ color: "rgba(255,255,255,0.3)" }}>
-              Click "Load Executors" to fetch TEE addresses
-            </p>
-          )}
+          <div>
+            <p className="font-mono text-[9px] uppercase mb-1" style={{ color: "rgba(255,255,255,0.3)" }}>Cap-0 TEE (hardcoded)</p>
+            <p className="break-all font-mono text-[11px]" style={{ color: "#00C896" }}>{SOVEREIGN_EXECUTOR_ADDRESS}</p>
+          </div>
+          <p className="mt-2 text-[10px]" style={{ color: "rgba(255,255,255,0.3)" }}>
+            Encrypted secrets are hardcoded in the contract (nonce=12 ECIES).
+          </p>
         </div>
 
         {/* Safety Rules */}
@@ -375,8 +322,7 @@ export function Rebalance({ agentAddress }: { agentAddress: Address }) {
           <ul className="space-y-2">
             {[
               "ethBps + wbtcBps + usdcBps ≤ 10000",
-              "executor != address(0)",
-              "httpExecutor != address(0)",
+              "encryptedSecrets hardcoded (nonce=12)",
               "gasLimit >= 3,000,000",
               "schedulerTtl >= 300 blocks",
             ].map((r) => (

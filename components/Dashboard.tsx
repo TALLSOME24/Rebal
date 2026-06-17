@@ -10,12 +10,12 @@ import {
   usePublicClient,
   useWalletClient,
 } from "wagmi";
-import { formatEther, formatUnits, parseEther, parseUnits, zeroAddress, type Address, type Hex, hexToString } from "viem";
+import { formatEther, formatUnits, parseEther, parseUnits, zeroAddress, type Address, type Hex } from "viem";
 import { portfolioAgentAbi } from "@/lib/abi/portfolioAgent";
 import { mockErc20Abi } from "@/lib/abi/mockERC20";
 import { schedulerAbi } from "@/lib/abi/scheduler";
 import { MOCK_TOKENS, portfolioAgentAddress, SCHEDULER } from "@/lib/constants";
-import { fetchHttpExecutor, fetchLlmExecutor } from "../lib/tee";
+import { fetchSovereignExecutor } from "../lib/tee";
 import { ChainGuard } from "./ChainGuard";
 
 const RISK_MODES = [
@@ -177,14 +177,6 @@ export function Dashboard() {
     query: { enabled: !!agent, refetchInterval: 12_000 },
   });
 
-  const { data: lastPrices } = useReadContract({
-    address: agent,
-    abi: portfolioAgentAbi,
-    functionName: "lastPricesBody",
-    args: address ? [address] : undefined,
-    query: { enabled: !!agent && !!address, refetchInterval: 15_000 },
-  });
-
   const { data: mockTokenBalances } = useReadContracts({
     contracts: [
       { address: MOCK_TOKENS.WETH, abi: mockErc20Abi, functionName: "balanceOf", args: [address ?? zeroAddress] },
@@ -194,15 +186,6 @@ export function Dashboard() {
     ],
     query: { enabled: !!address, refetchInterval: 12_000 },
   });
-
-  const lastPricesText = useMemo(() => {
-    if (!lastPrices || (lastPrices as Hex) === "0x") return "";
-    try {
-      return hexToString(lastPrices as Hex);
-    } catch {
-      return String(lastPrices);
-    }
-  }, [lastPrices]);
 
   const portfolioValue = useMemo(() => {
     if (!address || !mockTokenBalances) return null;
@@ -318,7 +301,7 @@ export function Dashboard() {
   const loadExecutor = async () => {
     setExecutorLoadError(null);
     try {
-      const ex = await fetchLlmExecutor();
+      const ex = await fetchSovereignExecutor();
       setExecutor(ex);
     } catch (e) {
       setExecutorLoadError(e instanceof Error ? e.message : "Failed registry read");
@@ -361,7 +344,7 @@ export function Dashboard() {
       address: agent,
       abi: portfolioAgentAbi,
       functionName: "registerPortfolio",
-      args: [riskMode, ethBps, wbtcBps, usdcBps, executor, executor],
+      args: [riskMode, ethBps, wbtcBps, usdcBps],
     });
   };
 
@@ -444,7 +427,7 @@ export function Dashboard() {
     const logs = await publicClient.getContractEvents({
       address: agent,
       abi: portfolioAgentAbi,
-      eventName: "RebalanceDecision",
+      eventName: "SovereignAgentResult",
       args: { owner: address },
       fromBlock: from,
       toBlock: latest,
@@ -453,13 +436,13 @@ export function Dashboard() {
       .map((l) => ({
         tx_hash: l.transactionHash,
         cycleId: (l.args as { cycleId: bigint }).cycleId,
-        executionIndex: (l.args as { executionIndex: bigint }).executionIndex,
-        llmHasError: Boolean((l.args as { llmHasError: boolean }).llmHasError),
-        completionPayload: (l.args as { completionPayload: Hex }).completionPayload,
+        executionIndex: (l.args as { cycleId: bigint }).cycleId,
+        llmHasError: Boolean((l.args as { hasError: boolean }).hasError),
+        completionPayload: "0x" as Hex,
         errorMessage: String((l.args as { errorMessage: string }).errorMessage ?? ""),
-        pricesHash: (l.args as { pricesHash: Hex }).pricesHash,
+        pricesHash: "0x" as Hex,
       }))
-      .sort((a, b) => Number(b.executionIndex - a.executionIndex));
+      .sort((a, b) => Number(b.cycleId - a.cycleId));
     setDecisions(rows.slice(0, 20));
   }, [address, agent, publicClient]);
 
@@ -471,11 +454,7 @@ export function Dashboard() {
 
   const completionPreview = (payload: Hex) => {
     if (!payload || payload === "0x") return "--";
-    try {
-      return hexToString(payload).slice(0, 2400);
-    } catch {
-      return `${payload.slice(0, 66)}...`;
-    }
+    return `${payload.slice(0, 66)}...`;
   };
 
   const lastRebalance = decisions[0] ? `Cycle ${String(decisions[0].cycleId)}` : "None yet";
@@ -911,15 +890,6 @@ export function Dashboard() {
                 )}
               </div>
             </section>
-
-            {lastPricesText && (
-              <section className="rounded-xl border border-rebal-border bg-rebal-card p-5">
-                <h2 className="text-sm font-semibold text-neutral-100">Last Price JSON</h2>
-                <pre className="mt-3 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-[#0D0D0D] p-3 font-mono text-xs text-neutral-400">
-                  {lastPricesText}
-                </pre>
-              </section>
-            )}
 
             {(statusMsg || isPending || confirming) && (
               <p className="rounded-xl border border-rebal-border bg-rebal-card p-4 font-mono text-sm text-rebal-primary">
