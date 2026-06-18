@@ -1,7 +1,9 @@
 {
-  "factoryAddress": "0x5ecadae5ee001670db3f64abb9b45aec66132ad3",
-  "deployedAt": "2026-06-17T10:11:28.580Z",
+  "factoryAddress": "0xb81759781c9dba115d2cf639c0efa57c017e686a",
+  "agentAddress": "0x607ac0c71a855f6df488868210a0b2d6e4eebbc1",
+  "dexRouter": "0xB44b8646281886Bc3F63280C1287CF1349A936b9",
+  "dexFactory": "0xD2D774e8ca44Eb3449d9028d89d4861cE56a867c",
+  "deployedAt": "2026-06-18T12:30:23.094Z",
   "deployer": "0x53Ee4EBC921AE15E5d153E2b6AdC805A4D29cFC2",
-  "overrideUser": "0x53Ee4EBC921AE15E5d153E2b6AdC805A4D29cFC2",
-  "overrideAgent": "0x26b3a6c452a9a24cb10fa7892340ca6cc7631016"
+  "version": "v12"
 }

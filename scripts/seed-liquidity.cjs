@@ -1,155 +1,182 @@
 /**
  * Seed initial liquidity into Rebal DEX pairs.
- * Mints tokens to deployer (within daily limits), approves router, adds liquidity.
- * LP tokens go to deployer address — NOT a dead address.
+ * Mints tokens to deployer, approves router, adds liquidity.
+ * LP tokens go to deployer address.
  *
- * Run: npx hardhat run scripts/seed-liquidity.cjs --network ritual
+ * Run: node scripts/seed-liquidity.cjs
  *
- * Seed amounts (within 1000-unit/day MockERC20 limit):
- *   WETH/USDC : 0.3  WETH + 900 USDC   (~$540 total @ WETH=$1800)
- *   WETH/USDT : 0.3  WETH + 900 USDT   (~$540 total)
- *   WETH/WBTC : 0.05 WETH + 0.001 WBTC (~$90  total @ WBTC=$18k)
+ * Seed amounts:
+ *   WETH/USDC : 0.3  WETH + 900  USDC
+ *   WETH/USDT : 0.3  WETH + 900  USDT
+ *   WETH/WBTC : 0.05 WETH + 0.001 WBTC
  */
 require("dotenv").config();
-const hre = require("hardhat");
+const {
+  createPublicClient,
+  createWalletClient,
+  http,
+  parseUnits,
+  formatUnits,
+} = require("viem");
+const { privateKeyToAccount } = require("viem/accounts");
 
 const DEX = require("../.dex-addresses.json");
 
+const PK = process.env.PRIVATE_KEY;
+if (!PK) { console.error("PRIVATE_KEY not set in .env"); process.exit(1); }
+const account = privateKeyToAccount(PK);
+
+const RITUAL_RPC = process.env.RITUAL_RPC_URL || "https://rpc.ritualfoundation.org";
+const chain = {
+  id: 1979,
+  name: "Ritual",
+  nativeCurrency: { name: "RITUAL", symbol: "RITUAL", decimals: 18 },
+  rpcUrls: { default: { http: [RITUAL_RPC] } },
+};
+
+const pub  = createPublicClient({ chain, transport: http() });
+const wall = createWalletClient({ account, chain, transport: http() });
+
 const ERC20_ABI = [
-  "function mint(uint256 amount) external",
-  "function balanceOf(address account) external view returns (uint256)",
-  "function approve(address spender, uint256 amount) external returns (bool)",
-  "function decimals() external view returns (uint8)",
-  "function symbol() external view returns (string)",
-  "function dailyMintLimit() external view returns (uint256)",
-  "function mintedToday(address) external view returns (uint256)",
+  { name: "mint",      type: "function", stateMutability: "nonpayable",
+    inputs: [{ name: "to", type: "address" }, { name: "amount", type: "uint256" }], outputs: [] },
+  { name: "balanceOf", type: "function", stateMutability: "view",
+    inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] },
+  { name: "approve",   type: "function", stateMutability: "nonpayable",
+    inputs: [{ name: "spender", type: "address" }, { name: "amount", type: "uint256" }], outputs: [{ type: "bool" }] },
+  { name: "decimals",  type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint8" }] },
+  { name: "symbol",    type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
 ];
 
 const ROUTER_ABI = [
-  "function addLiquidity(address tokenA, address tokenB, uint256 amountADesired, uint256 amountBDesired, uint256 amountAMin, uint256 amountBMin, address to, uint256 deadline) external returns (uint256 amountA, uint256 amountB, uint256 liquidity)",
+  {
+    name: "addLiquidity",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "tokenA",         type: "address" },
+      { name: "tokenB",         type: "address" },
+      { name: "amountADesired", type: "uint256" },
+      { name: "amountBDesired", type: "uint256" },
+      { name: "amountAMin",     type: "uint256" },
+      { name: "amountBMin",     type: "uint256" },
+      { name: "to",             type: "address" },
+      { name: "deadline",       type: "uint256" },
+    ],
+    outputs: [
+      { name: "amountA",    type: "uint256" },
+      { name: "amountB",    type: "uint256" },
+      { name: "liquidity",  type: "uint256" },
+    ],
+  },
 ];
 
-const TX_OPTS = {
-  maxFeePerGas:         hre.ethers.parseUnits("2", "gwei"),
-  maxPriorityFeePerGas: hre.ethers.parseUnits("1", "gwei"),
-};
+const PAIR_ABI = [
+  { name: "balanceOf",   type: "function", stateMutability: "view",
+    inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] },
+  { name: "totalSupply", type: "function", stateMutability: "view",
+    inputs: [], outputs: [{ type: "uint256" }] },
+];
 
-async function main() {
-  const [deployer] = await hre.ethers.getSigners();
-  console.log("Deployer:", deployer.address);
-  console.log("Router  :", DEX.router);
-  console.log("Chain   :", DEX.chainId, "\n");
+// Ritual block.timestamp is in milliseconds — use far-future ms deadline
+const DEADLINE = 9_999_999_999_999n;
 
-  const router = new hre.ethers.Contract(DEX.router, ROUTER_ABI, deployer);
-  // Ritual chain uses millisecond block.timestamp (~13 digits); use a far-future ms deadline
-  const deadline = 9_999_999_999_999;
-
-  const WETH = new hre.ethers.Contract(DEX.tokens.WETH, ERC20_ABI, deployer);
-  const WBTC = new hre.ethers.Contract(DEX.tokens.WBTC, ERC20_ABI, deployer);
-  const USDC = new hre.ethers.Contract(DEX.tokens.USDC, ERC20_ABI, deployer);
-  const USDT = new hre.ethers.Contract(DEX.tokens.USDT, ERC20_ABI, deployer);
-
-  // ── Mint tokens ──────────────────────────────────────────────────────────────
-  // WETH: 0.3 + 0.3 + 0.05 = 0.65 WETH total (18 dec) → well within 1000/day limit
-  // USDC: 900 (6 dec)
-  // USDT: 900 (6 dec)
-  // WBTC: 0.001 (8 dec)
-  const mintAmounts = [
-    { token: WETH, sym: "WETH", amount: hre.ethers.parseUnits("0.65", 18) },
-    { token: USDC, sym: "USDC", amount: hre.ethers.parseUnits("900",  6)  },
-    { token: USDT, sym: "USDT", amount: hre.ethers.parseUnits("900",  6)  },
-    { token: WBTC, sym: "WBTC", amount: hre.ethers.parseUnits("0.001", 8) },
-  ];
-
-  console.log("── Minting tokens ──────────────────────────────────────────────");
-  for (const { token, sym, amount } of mintAmounts) {
-    const limit  = await token.dailyMintLimit();
-    const minted = await token.mintedToday(deployer.address);
-    const remaining = limit - minted;
-    const mintAmt = amount > remaining ? remaining : amount;
-    if (mintAmt <= 0n) {
-      console.log(`  ${sym}: daily limit already reached — using existing balance`);
-      continue;
-    }
-    const tx = await token.mint(mintAmt, TX_OPTS);
-    await tx.wait();
-    const bal = await token.balanceOf(deployer.address);
-    console.log(`  ${sym}: minted ${hre.ethers.formatUnits(mintAmt, await token.decimals())}  (balance: ${hre.ethers.formatUnits(bal, await token.decimals())})`);
-  }
-  console.log();
-
-  // ── Pair 1: WETH / USDC ──────────────────────────────────────────────────────
-  const wethForUsdc  = hre.ethers.parseUnits("0.3", 18);
-  const usdcForPool  = hre.ethers.parseUnits("900", 6);
-  await addLiquidity(router, deployer, WETH, USDC, wethForUsdc, usdcForPool, "WETH/USDC", deadline);
-
-  // ── Pair 2: WETH / USDT ──────────────────────────────────────────────────────
-  const wethForUsdt  = hre.ethers.parseUnits("0.3",   18);
-  const usdtForPool  = hre.ethers.parseUnits("900",    6);
-  await addLiquidity(router, deployer, WETH, USDT, wethForUsdt, usdtForPool, "WETH/USDT", deadline);
-
-  // ── Pair 3: WETH / WBTC ──────────────────────────────────────────────────────
-  const wethForWbtc  = hre.ethers.parseUnits("0.05",  18);
-  const wbtcForPool  = hre.ethers.parseUnits("0.001",  8);
-  await addLiquidity(router, deployer, WETH, WBTC, wethForWbtc, wbtcForPool, "WETH/WBTC", deadline);
-
-  console.log("\n═══════════════════════════════════════════════════════════════");
-  console.log("  LIQUIDITY SEEDED — LP tokens held by deployer");
-  console.log("  Run recover-liquidity.cjs to pull liquidity back at any time.");
-  console.log("═══════════════════════════════════════════════════════════════");
+async function send(label, fn) {
+  let hash;
+  try { hash = await fn(); }
+  catch (err) { console.error(`  ${label} FAILED:`, err.shortMessage || err.message); process.exit(1); }
+  const receipt = await pub.waitForTransactionReceipt({ hash });
+  if (receipt.status !== "success") { console.error(`  ${label} REVERTED`); process.exit(1); }
+  return receipt;
 }
 
-async function addLiquidity(router, deployer, tokenA, tokenB, amountA, amountB, label, deadline) {
-  console.log(`── Adding liquidity: ${label} ───────────────────────────────────`);
-  const decA = await tokenA.decimals();
-  const decB = await tokenB.decimals();
-  const symA = await tokenA.symbol();
-  const symB = await tokenB.symbol();
-
-  // Check balances
-  const balA = await tokenA.balanceOf(deployer.address);
-  const balB = await tokenB.balanceOf(deployer.address);
-  console.log(`  ${symA} balance: ${hre.ethers.formatUnits(balA, decA)}`);
-  console.log(`  ${symB} balance: ${hre.ethers.formatUnits(balB, decB)}`);
-  if (balA < amountA) { console.log(`  !! Insufficient ${symA} balance — skipping`); return; }
-  if (balB < amountB) { console.log(`  !! Insufficient ${symB} balance — skipping`); return; }
-
-  // Approve
-  const appA = await tokenA.approve(router.target || router.address, amountA, TX_OPTS);
-  await appA.wait();
-  const appB = await tokenB.approve(router.target || router.address, amountB, TX_OPTS);
-  await appB.wait();
-  console.log(`  Approved router for ${symA} + ${symB}`);
-
-  // Add liquidity
-  const tx = await router.addLiquidity(
-    tokenA.target || tokenA.address,
-    tokenB.target || tokenB.address,
-    amountA,
-    amountB,
-    0n,          // amountAMin — no slippage guard needed for seed
-    0n,          // amountBMin
-    deployer.address,   // LP tokens to deployer
-    deadline,
-    TX_OPTS
+async function mintToken(addr, sym, decimals, amount) {
+  console.log(`  minting ${formatUnits(amount, decimals)} ${sym} to ${account.address}...`);
+  await send(`mint ${sym}`, () =>
+    wall.writeContract({ address: addr, abi: ERC20_ABI, functionName: "mint",
+      args: [account.address, amount] })
   );
-  const receipt = await tx.wait();
+  const bal = await pub.readContract({ address: addr, abi: ERC20_ABI, functionName: "balanceOf", args: [account.address] });
+  console.log(`  ${sym} balance: ${formatUnits(bal, decimals)}`);
+  return bal;
+}
 
-  // Parse Mint event for liquidity amount
-  const pair = new hre.ethers.Contract(
-    await (new hre.ethers.Contract(
-      require("../.dex-addresses.json").factory,
-      ["function getPair(address,address) external view returns (address)"],
-      deployer
-    )).getPair(tokenA.target || tokenA.address, tokenB.target || tokenB.address),
-    ["function balanceOf(address) external view returns (uint256)", "function totalSupply() external view returns (uint256)"],
-    deployer
+async function addLiquidity(label, tokenA, tokenB, symA, symB, decA, decB, amountA, amountB, pairAddr) {
+  console.log(`\n── ${label} ─────────────────────────────────────────`);
+
+  const balA = await pub.readContract({ address: tokenA, abi: ERC20_ABI, functionName: "balanceOf", args: [account.address] });
+  const balB = await pub.readContract({ address: tokenB, abi: ERC20_ABI, functionName: "balanceOf", args: [account.address] });
+  console.log(`  ${symA} balance: ${formatUnits(balA, decA)}`);
+  console.log(`  ${symB} balance: ${formatUnits(balB, decB)}`);
+  if (balA < amountA) { console.log(`  !! Insufficient ${symA} — skipping`); return; }
+  if (balB < amountB) { console.log(`  !! Insufficient ${symB} — skipping`); return; }
+
+  await send(`approve ${symA}`, () =>
+    wall.writeContract({ address: tokenA, abi: ERC20_ABI, functionName: "approve",
+      args: [DEX.router, amountA] })
   );
-  const lpBal = await pair.balanceOf(deployer.address);
-  const lpTotal = await pair.totalSupply();
-  console.log(`  LP minted  : ${hre.ethers.formatUnits(lpBal, 18)}`);
-  console.log(`  LP total   : ${hre.ethers.formatUnits(lpTotal, 18)}`);
-  console.log(`  ✓ ${label} liquidity added\n`);
+  await send(`approve ${symB}`, () =>
+    wall.writeContract({ address: tokenB, abi: ERC20_ABI, functionName: "approve",
+      args: [DEX.router, amountB] })
+  );
+  console.log(`  approved router for ${symA} + ${symB}`);
+
+  await send(`addLiquidity ${label}`, () =>
+    wall.writeContract({ address: DEX.router, abi: ROUTER_ABI, functionName: "addLiquidity",
+      args: [tokenA, tokenB, amountA, amountB, 0n, 0n, account.address, DEADLINE] })
+  );
+
+  const lpBal   = await pub.readContract({ address: pairAddr, abi: PAIR_ABI, functionName: "balanceOf",   args: [account.address] });
+  const lpTotal = await pub.readContract({ address: pairAddr, abi: PAIR_ABI, functionName: "totalSupply", args: [] });
+  console.log(`  LP minted  : ${formatUnits(lpBal,   18)}`);
+  console.log(`  LP total   : ${formatUnits(lpTotal, 18)}`);
+  console.log(`  ✓ ${label} done`);
+}
+
+async function main() {
+  console.log("═".repeat(62));
+  console.log("  seed-liquidity  —  Ritual Testnet (1979)");
+  console.log("═".repeat(62));
+  console.log("  deployer :", account.address);
+  console.log("  router   :", DEX.router);
+
+  const WETH = DEX.tokens.WETH;
+  const WBTC = DEX.tokens.WBTC;
+  const USDC = DEX.tokens.USDC;
+  const USDT = DEX.tokens.USDT;
+
+  // ── Mint all tokens ────────────────────────────────────────────────────────
+  console.log("\n── Minting tokens ──────────────────────────────────────────────");
+  await mintToken(WETH, "WETH", 18, parseUnits("0.65",  18));
+  await mintToken(USDC, "USDC",  6, parseUnits("900",    6));
+  await mintToken(USDT, "USDT",  6, parseUnits("900",    6));
+  await mintToken(WBTC, "WBTC",  8, parseUnits("0.001",  8));
+
+  // ── Add liquidity to each pair ─────────────────────────────────────────────
+  await addLiquidity(
+    "WETH/USDC",
+    WETH, USDC, "WETH", "USDC", 18, 6,
+    parseUnits("0.3", 18), parseUnits("900", 6),
+    DEX.pairs["WETH/USDC"]
+  );
+
+  await addLiquidity(
+    "WETH/USDT",
+    WETH, USDT, "WETH", "USDT", 18, 6,
+    parseUnits("0.3", 18), parseUnits("900", 6),
+    DEX.pairs["WETH/USDT"]
+  );
+
+  await addLiquidity(
+    "WETH/WBTC",
+    WETH, WBTC, "WETH", "WBTC", 18, 8,
+    parseUnits("0.05", 18), parseUnits("0.001", 8),
+    DEX.pairs["WETH/WBTC"]
+  );
+
+  console.log("\n" + "═".repeat(62));
+  console.log("  DONE — liquidity seeded, LP tokens held by deployer");
+  console.log("═".repeat(62));
 }
 
 main().catch(e => { console.error(e); process.exit(1); });

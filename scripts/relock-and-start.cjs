@@ -20,7 +20,7 @@ const {
 const { privateKeyToAccount } = require("viem/accounts");
 
 const RITUAL_RPC = process.env.RITUAL_RPC_URL || "https://rpc.ritualfoundation.org";
-const AGENT  = process.env.AGENT_ADDRESS || "0x2d9407c5e4457355a521b28225daf4455794738d";
+const AGENT  = process.env.AGENT_ADDRESS || "0x607ac0c71a855f6df488868210a0b2d6e4eebbc1";
 const WALLET = "0x532F0dF0896F353d8C3DD8cc134e8129DA2a3948";
 
 const PK = process.env.PRIVATE_KEY;

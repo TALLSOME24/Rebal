@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-/// @title PortfolioAgent v11 — Sovereign Agent (0x080C) single-tick architecture
+/// @title PortfolioAgent v12 — Sovereign Agent (0x080C) + LLM-directed DEX swaps
 /// @notice One scheduled tick submits a ZeroClaw job that fetches prices + reasons
 ///         about drift in one TEE execution. The AsyncDelivery callback receives the
 ///         JSON decision and gates _doRebalance on "action":"swap".
@@ -56,6 +56,10 @@ interface IUniswapV2Router {
         uint256 amountIn,
         address[] calldata path
     ) external view returns (uint256[] memory amounts);
+}
+
+interface IUniswapV2Factory {
+    function getPair(address tokenA, address tokenB) external view returns (address pair);
 }
 
 /// @dev Tuple type for 0x080C convoHistory / output / skills / systemPrompt fields.
@@ -385,9 +389,14 @@ contract PortfolioAgent {
             return;
         }
 
-        // Gate rebalance on the agent's explicit "swap" decision.
+        // Execute the swap the LLM explicitly requested.
         if (dexRouter != address(0) && _isSwapAction(textResponse)) {
-            _doRebalance(portfolioOwner, portfolios[portfolioOwner]);
+            (address tokenIn, address tokenOut, uint256 amountBps) = _parseLLMSwap(textResponse);
+            if (tokenIn != address(0) && tokenOut != address(0) && amountBps > 0 && amountBps <= 10_000) {
+                uint256 balIn  = IERC20(tokenIn).balanceOf(address(this));
+                uint256 amtIn  = balIn * amountBps / 10_000;
+                if (amtIn > 0) _executeSwap(portfolioOwner, tokenIn, tokenOut, amtIn);
+            }
         }
     }
 
@@ -488,6 +497,74 @@ contract PortfolioAgent {
             "\"reason\":\"<explanation>\",\"confidence\":<0.0-1.0>}\n"
             "No markdown. No code blocks. No text before or after the JSON."
         ));
+    }
+
+    // ─── LLM JSON parser ─────────────────────────────────────────────────────
+
+    /// @dev Extract the string value for a JSON key whose pattern is `"key":"`.
+    ///      e.g. _jsonStr(b, '"fromToken":"') on {"fromToken":"WETH"} returns "WETH".
+    function _jsonStr(bytes memory b, string memory keyQuote) internal pure returns (string memory) {
+        bytes memory k = bytes(keyQuote);
+        uint256 bLen = b.length;
+        uint256 kLen = k.length;
+        for (uint256 i = 0; i + kLen <= bLen; i++) {
+            bool match_ = true;
+            for (uint256 j = 0; j < kLen; j++) {
+                if (b[i + j] != k[j]) { match_ = false; break; }
+            }
+            if (!match_) continue;
+            uint256 start = i + kLen;
+            uint256 end   = start;
+            while (end < bLen && b[end] != '"') end++;
+            bytes memory val = new bytes(end - start);
+            for (uint256 x = 0; x < end - start; x++) val[x] = b[start + x];
+            return string(val);
+        }
+        return "";
+    }
+
+    /// @dev Extract the first uint256 value for a JSON key whose pattern is `"key":`.
+    ///      e.g. _jsonUint(b, '"amountBps":') on {"amountBps":500} returns 500.
+    function _jsonUint(bytes memory b, string memory keyColon) internal pure returns (uint256) {
+        bytes memory k = bytes(keyColon);
+        uint256 bLen = b.length;
+        uint256 kLen = k.length;
+        for (uint256 i = 0; i + kLen <= bLen; i++) {
+            bool match_ = true;
+            for (uint256 j = 0; j < kLen; j++) {
+                if (b[i + j] != k[j]) { match_ = false; break; }
+            }
+            if (!match_) continue;
+            uint256 pos = i + kLen;
+            uint256 val = 0;
+            bool hasDigit = false;
+            while (pos < bLen) {
+                uint8 c = uint8(b[pos]);
+                if (c >= 48 && c <= 57) { val = val * 10 + (c - 48); hasDigit = true; pos++; }
+                else break;
+            }
+            if (hasDigit) return val;
+        }
+        return 0;
+    }
+
+    /// @dev Parse the LLM swap JSON for fromToken, toToken, amountBps.
+    function _parseLLMSwap(string memory text) internal pure
+        returns (address tokenIn, address tokenOut, uint256 amountBps)
+    {
+        bytes memory b = bytes(text);
+        tokenIn   = _tokenAddr(_jsonStr(b, '"fromToken":"'));
+        tokenOut  = _tokenAddr(_jsonStr(b, '"toToken":"'));
+        amountBps = _jsonUint(b, '"amountBps":');
+    }
+
+    function _tokenAddr(string memory name) internal pure returns (address) {
+        bytes32 h = keccak256(bytes(name));
+        if (h == keccak256("WETH")) return WETH_TOKEN;
+        if (h == keccak256("WBTC")) return WBTC_TOKEN;
+        if (h == keccak256("USDC")) return USDC_TOKEN;
+        if (h == keccak256("USDT")) return USDT_TOKEN;
+        return address(0);
     }
 
     // ─── Action parser ────────────────────────────────────────────────────────
