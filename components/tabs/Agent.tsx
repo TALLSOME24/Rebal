@@ -247,37 +247,6 @@ export function Agent({ agentAddress }: { agentAddress: Address }) {
         </div>
       </div>
 
-      {/* Gas vs Yield */}
-      <div
-        className="rounded-2xl border p-4"
-        style={{ backgroundColor: "rgba(255,255,255,0.025)", borderColor: "rgba(255,255,255,0.06)" }}
-      >
-        <div className="mb-3 flex items-center justify-between gap-2">
-          <Label>Gas vs Yield</Label>
-          <span
-            className="rounded-full border px-2 py-0.5 font-mono text-[9px]"
-            style={{ borderColor: "rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.25)" }}
-          >
-            testnet estimate
-          </span>
-        </div>
-        <div className="space-y-2">
-          {[
-            { label: "Estimated gas (next tick)", value: "~$0.05", color: "#FF4757" },
-            { label: "Yield captured", value: "$0.00", color: "rgba(255,255,255,0.4)" },
-            { label: "Net (yield − gas)", value: "−$0.05", color: "rgba(255,255,255,0.3)" },
-          ].map(({ label, value, color }) => (
-            <div key={label} className="flex items-center justify-between">
-              <span className="text-sm" style={{ color: "rgba(255,255,255,0.5)" }}>{label}</span>
-              <span className="font-mono text-sm" style={{ color }}>{value}</span>
-            </div>
-          ))}
-        </div>
-        <p className="mt-3 text-xs" style={{ color: "rgba(255,255,255,0.2)" }}>
-          DEX integration not active on testnet — yield capture is $0.00 until live swaps are enabled.
-        </p>
-      </div>
-
       {/* Scheduler Setup */}
       <Card>
         <div className="mb-3 flex items-center justify-between gap-2">

@@ -138,13 +138,12 @@ export function Dashboard({ agentAddress }: { agentAddress: Address }) {
     <div className="space-y-4">
       {/* Stat strip */}
       <div
-        className="grid grid-cols-2 overflow-hidden rounded-2xl lg:grid-cols-4"
+        className="grid grid-cols-3 overflow-hidden rounded-2xl lg:grid-cols-3"
         style={{ backgroundColor: "rgba(255,255,255,0.05)", gap: "1px" }}
       >
         {[
           { label: "Total Value", value: pvLoading ? "…" : USD.format(totalValue), sub: `live · CoinGecko · ${lastUpdatedText}`, color: "#00C896" },
           { label: "RitualWallet", value: `${ritualBalEth.toFixed(4)} RITUAL`, sub: `~${ticksLeft} ticks left`, color: "white" },
-          { label: "Yield Earned", value: "$0.00", sub: "Aave not deployed", color: "#D4A847" },
           {
             label: "Agent Status",
             value: agentState.registered ? "Running" : "Not started",

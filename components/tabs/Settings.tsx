@@ -21,11 +21,6 @@ const ROADMAP = [
     status: "In design ✓",
   },
   {
-    title: "Yield Farming",
-    desc: "Aave V3 supply/withdraw. Auto-compound idle stablecoins. APY-weighted allocation suggestions.",
-    status: "In design ✓",
-  },
-  {
     title: "Smart Accounts",
     desc: "ERC-4337 session keys via Biconomy. Gasless rebalance transactions. Social recovery.",
     status: "In design ✓",
@@ -156,7 +151,7 @@ export function Settings({ agentAddress }: { agentAddress: Address }) {
       {/* Roadmap */}
       <Card>
         <Label>Roadmap</Label>
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-2">
           {ROADMAP.map((r) => (
             <div
               key={r.title}
