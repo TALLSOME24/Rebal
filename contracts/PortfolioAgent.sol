@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-/// @title PortfolioAgent v12 — Sovereign Agent (0x080C) + LLM-directed DEX swaps
+/// @title PortfolioAgent v13 — Sovereign Agent (0x080C) + LLM-directed DEX swaps
 /// @notice One scheduled tick submits a ZeroClaw job that fetches prices + reasons
 ///         about drift in one TEE execution. The AsyncDelivery callback receives the
 ///         JSON decision and gates _doRebalance on "action":"swap".
@@ -98,7 +98,9 @@ contract PortfolioAgent {
 
     address public dexRouter;
 
-    uint32 public constant MIN_TTL_BLOCKS = 300;
+    uint32  public constant MIN_TTL_BLOCKS    = 300;
+    uint256 public constant MAX_SLIPPAGE_BPS  = 500;   // 5% max slippage on DEX swaps
+    uint256 public constant MAX_LLM_SWAP_BPS  = 2_000; // 20% max of any token per LLM tick
 
     // ─── Types ───────────────────────────────────────────────────────────────
     enum RiskMode { Conservative, Balanced, Aggressive }
@@ -118,6 +120,8 @@ contract PortfolioAgent {
     mapping(address => bytes32)   public  pendingJobId;       // in-flight job per owner
     mapping(bytes32  => address)  public  jobOwner;           // reverse lookup for callback
     mapping(address => uint256)   public  lastCycleId;        // incremented on each result
+
+    uint256 private _ritualLock = 1; // reentrancy guard for ETH withdrawal paths
 
     // ─── Events ──────────────────────────────────────────────────────────────
     event PortfolioRegistered(address indexed owner, RiskMode risk, uint16 ethBps, uint16 wbtcBps, uint16 usdcBps);
@@ -155,6 +159,13 @@ contract PortfolioAgent {
         _;
     }
 
+    modifier noReentrant() {
+        require(_ritualLock == 1, "reentrant");
+        _ritualLock = 2;
+        _;
+        _ritualLock = 1;
+    }
+
     // ─── Constructor ──────────────────────────────────────────────────────────
     constructor(address _owner, address _dexRouter) {
         require(_owner != address(0), "owner required");
@@ -168,6 +179,7 @@ contract PortfolioAgent {
     // ─── Owner: DEX router ───────────────────────────────────────────────────
 
     function setDexRouter(address _router) external onlyOwner {
+        require(_router != address(0), "zero address");
         dexRouter = _router;
     }
 
@@ -210,25 +222,27 @@ contract PortfolioAgent {
         emit FeesDepositFor(msg.sender, msg.value);
     }
 
-    function withdrawFees(uint256 amount) external onlyOwner {
+    function withdrawFees(uint256 amount) external onlyOwner noReentrant {
         uint256 bal = IRitualWallet(RITUAL_WALLET).balanceOf(address(this));
         require(bal > 0, "nothing to withdraw");
         uint256 amt = amount == 0 ? bal : amount;
+        require(amt <= bal, "amount exceeds balance");
         IRitualWallet(RITUAL_WALLET).withdraw(amt);
         (bool ok,) = owner.call{value: amt}("");
         require(ok, "transfer failed");
     }
 
-    function withdrawRitualFees(uint256 amount) external onlyOwner {
+    function withdrawRitualFees(uint256 amount) external onlyOwner noReentrant {
         uint256 bal = IRitualWallet(RITUAL_WALLET).balanceOf(address(this));
         require(bal > 0, "nothing to withdraw");
         uint256 amt = amount == 0 ? bal : amount;
+        require(amt <= bal, "amount exceeds balance");
         IRitualWallet(RITUAL_WALLET).withdraw(amt);
         (bool ok,) = owner.call{value: amt}("");
         require(ok, "transfer failed");
     }
 
-    function withdrawAllRitualFees() external onlyOwner {
+    function withdrawAllRitualFees() external onlyOwner noReentrant {
         uint256 bal = IRitualWallet(RITUAL_WALLET).balanceOf(address(this));
         require(bal > 0, "nothing to withdraw");
         IRitualWallet(RITUAL_WALLET).withdraw(bal);
@@ -314,9 +328,10 @@ contract PortfolioAgent {
     function cancelAutomation() external {
         Portfolio storage p = portfolios[msg.sender];
         require(p.scheduleId != 0, "no active schedule");
-        scheduler.cancel(p.scheduleId);
-        emit AutomationCancelled(msg.sender, p.scheduleId);
-        p.scheduleId = 0;
+        uint256 sid = p.scheduleId;
+        p.scheduleId = 0; // CEI: clear before external call
+        try scheduler.cancel(sid) {} catch {}
+        emit AutomationCancelled(msg.sender, sid);
     }
 
     // Admin escape hatch: clear a stuck pendingJobId caused by a callback that never arrived.
@@ -392,9 +407,16 @@ contract PortfolioAgent {
         // Execute the swap the LLM explicitly requested.
         if (dexRouter != address(0) && _isSwapAction(textResponse)) {
             (address tokenIn, address tokenOut, uint256 amountBps) = _parseLLMSwap(textResponse);
-            if (tokenIn != address(0) && tokenOut != address(0) && amountBps > 0 && amountBps <= 10_000) {
-                uint256 balIn  = IERC20(tokenIn).balanceOf(address(this));
-                uint256 amtIn  = balIn * amountBps / 10_000;
+            // FIX 5: require valid, distinct token addresses from the whitelist
+            if (tokenIn == address(0) || tokenOut == address(0) || tokenIn == tokenOut) {
+                emit TickFailed(portfolioOwner, cycleId, "SWAP", "invalid LLM token");
+                return;
+            }
+            // FIX 2: cap per-tick swap to MAX_LLM_SWAP_BPS (20%) regardless of LLM output
+            if (amountBps > MAX_LLM_SWAP_BPS) amountBps = MAX_LLM_SWAP_BPS;
+            if (amountBps > 0) {
+                uint256 balIn = IERC20(tokenIn).balanceOf(address(this));
+                uint256 amtIn = balIn * amountBps / 10_000;
                 if (amtIn > 0) _executeSwap(portfolioOwner, tokenIn, tokenOut, amtIn);
             }
         }
@@ -693,11 +715,21 @@ contract PortfolioAgent {
             path[2] = tokenOut;
         }
 
+        // FIX 1: compute minimum output with MAX_SLIPPAGE_BPS (5%) tolerance
+        uint256 amountOutMin;
+        try IUniswapV2Router(dexRouter).getAmountsOut(amountIn, path)
+            returns (uint256[] memory expected) {
+            amountOutMin = expected[expected.length - 1] * (10_000 - MAX_SLIPPAGE_BPS) / 10_000;
+        } catch {
+            emit TickFailed(portfolioOwner, lastCycleId[portfolioOwner], "SWAP", "price quote failed");
+            return;
+        }
+
         IERC20(tokenIn).approve(dexRouter, amountIn);
 
         try IUniswapV2Router(dexRouter).swapExactTokensForTokens(
             amountIn,
-            0,
+            amountOutMin,
             path,
             address(this),
             block.timestamp + 300_000

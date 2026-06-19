@@ -1,4 +1,4 @@
-// ABI for PortfolioAgent v10 — Sovereign Agent (0x080C) single-tick architecture.
+// ABI for PortfolioAgent v13 — Sovereign Agent (0x080C) + security fixes (slippage, swap cap, reentrancy guard).
 export const portfolioAgentABI = [
   // ─── Portfolio management ──────────────────────────────────────────────────
   {
@@ -47,6 +47,13 @@ export const portfolioAgentABI = [
     type: "function",
     stateMutability: "nonpayable",
     inputs: [],
+    outputs: [],
+  },
+  {
+    name: "clearPendingJob",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "portfolioOwner", type: "address" }],
     outputs: [],
   },
   // ─── Async state ──────────────────────────────────────────────────────────

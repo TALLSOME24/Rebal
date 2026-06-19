@@ -1,9 +1,7 @@
 {
-  "factoryAddress": "0xb81759781c9dba115d2cf639c0efa57c017e686a",
-  "agentAddress": "0x607ac0c71a855f6df488868210a0b2d6e4eebbc1",
+  "factoryV4": "0x3a7a972e17794e9d8ff4eb2be427189efbd7e3c8",
+  "agentV13": "0x92Daf1F6455FbA78452B60FCc7399331589c430c",
   "dexRouter": "0xB44b8646281886Bc3F63280C1287CF1349A936b9",
-  "dexFactory": "0xD2D774e8ca44Eb3449d9028d89d4861cE56a867c",
-  "deployedAt": "2026-06-18T12:30:23.094Z",
-  "deployer": "0x53Ee4EBC921AE15E5d153E2b6AdC805A4D29cFC2",
-  "version": "v12"
+  "deployedAt": "34865532",
+  "scheduleId": "2629085"
 }

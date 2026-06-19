@@ -11,6 +11,7 @@ contract PortfolioAgentFactory {
     address[] public allAgents;
 
     event AgentDeployed(address indexed user, address indexed agent);
+    event AgentOverridden(address indexed user, address indexed agent);
 
     constructor(address _dexRouter) {
         factoryOwner = msg.sender;
@@ -39,11 +40,12 @@ contract PortfolioAgentFactory {
         return agentOf[user] != address(0);
     }
 
-    /// @notice Admin: remap user → agent (e.g. after a manual v10 deploy outside the factory).
+    /// @notice Admin: remap user → agent (e.g. after a manual deploy outside the factory).
     function overrideAgent(address user, address agent) external {
         require(msg.sender == factoryOwner, "not owner");
         require(agent != address(0), "zero agent");
         agentOf[user] = agent;
-        emit AgentDeployed(user, agent);
+        allAgents.push(agent);
+        emit AgentOverridden(user, agent);
     }
 }
